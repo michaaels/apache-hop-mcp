@@ -30,7 +30,7 @@ final class HopMcpServer implements AutoCloseable {
     add("hop_validate","Run safe structural validation without field/database resolution.",schema(Map.of("path",str("Definition path")),List.of("path")), a->service.validate(s(a,"path")));
     add("hop_deep_check","Run Apache Hop's native checker. Disabled unless hop mcp starts with --allow-deep-check; may access external systems.",schema(Map.of("path",str("Definition path")),List.of("path")), a->service.deepCheck(s(a,"path")));
     add("hop_read_text","Read a UTF-8 project file, confined to project root and size limits.",schema(Map.of("path",str("Project-relative path")),List.of("path")), a->service.readText(s(a,"path")));
-    add("hop_search","Search text within the project with scan/result limits.",schema(Map.of("query",str("Case-insensitive text"),"glob",str("Optional glob, default *")),List.of("query")), a->service.search(s(a,"query"),sDefault(a,"glob","*")));
+    add("hop_search","Search text within the project with scan/result limits.",schema(Map.of("query",str("Case-insensitive text"),"glob",str("Optional glob, default **")),List.of("query")), a->service.search(s(a,"query"),sDefault(a,"glob","**")));
     add("hop_find_table","Find SQL table references across Hop definitions.",schema(Map.of("table",str("Table name or substring")),List.of("table")), a->service.findTable(s(a,"table")));
     add("hop_dependencies","Extract referenced .hpl/.hwf definitions and resolve those inside project root.",schema(Map.of("path",str("Definition path")),List.of("path")), a->service.dependencies(s(a,"path")));
   }

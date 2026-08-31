@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+      - name: Verify
+        run: mvn -B clean verify
+      - name: Validate Marketplace ZIP
+        shell: bash
+        run: |
+          set -euo pipefail
+          ZIP="target/apache-hop-mcp-0.3.0.zip"
+          test -f "$ZIP"
+          unzip -l "$ZIP" | grep 'plugins/misc/apache-hop-mcp/apache-hop-mcp-0.3.0.jar'
+          unzip -l "$ZIP" | grep 'plugins/misc/apache-hop-mcp/version.xml'
+          if unzip -l "$ZIP" | grep -E 'plugins/misc/apache-hop-mcp/lib/hop-(core|engine|ui)-'; then
+            echo "Apache Hop runtime jars must not be bundled" >&2
+            exit 1
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: apache-hop-mcp-0.3.0
+          path: target/apache-hop-mcp-0.3.0.zip

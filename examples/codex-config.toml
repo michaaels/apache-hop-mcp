@@ -1,0 +1,9 @@
+# Linux/macOS
+[mcp_servers.apache-hop]
+command = "/opt/hop/hop"
+args = ["mcp", "--root", "/data/hop/project"]
+
+# Windows example (use in a separate config; duplicate TOML tables are not allowed):
+# [mcp_servers.apache-hop]
+# command = "C:\\hop\\hop.bat"
+# args = ["mcp", "--root", "C:\\Hop\\project"]

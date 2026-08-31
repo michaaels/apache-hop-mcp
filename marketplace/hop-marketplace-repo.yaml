@@ -1,0 +1,23 @@
+schemaVersion: "1.0"
+kind: hop-marketplace-repository
+id: apache-hop-mcp
+name: Apache Hop MCP Community Repository
+url: https://github.com/michaaels/apache-hop-mcp/releases/download/
+primary: false
+enabled: true
+browse: false
+includeSnapshots: false
+catalogUrl: https://raw.githubusercontent.com/michaaels/apache-hop-mcp/main/marketplace/catalog.yaml
+urlTemplate: https://github.com/michaaels/apache-hop-mcp/releases/download/v${version}/${artifactId}-${version}.zip
+groupIdFilter: io.github.michaaels
+homepage: https://github.com/michaaels/apache-hop-mcp
+description: Community Apache Hop MCP plugin releases hosted on GitHub.
+plugins:
+  - groupId: io.github.michaaels
+    artifactId: apache-hop-mcp
+    version: "0.3.0"
+    minHopVersion: "2.19.0"
+    maxHopVersion: "2.19.999"
+    name: Apache Hop MCP
+    category: Community / AI
+    description: Native Java MCP server for Apache Hop. Installs `hop mcp` and a Hop GUI menu entry.

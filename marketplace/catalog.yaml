@@ -1,0 +1,12 @@
+schemaVersion: "1.0"
+kind: hop-marketplace-catalog
+plugins:
+  - groupId: io.github.michaaels
+    artifactId: apache-hop-mcp
+    version: "0.3.0"
+    name: Apache Hop MCP
+    category: Community / AI
+    description: Native Java Model Context Protocol server for Apache Hop with the headless `hop mcp` command.
+    minHopVersion: "2.19.0"
+    maxHopVersion: "2.19.999"
+    source: apache-hop-mcp

@@ -10,5 +10,6 @@ First native-Java Marketplace edition.
 - Redacts secret-looking fields from component inspection.
 - Apache Hop native deep checking is opt-in because it can access configured external systems.
 - Built against Apache Hop 2.19.0 and intended for the 2.19.x line.
+- GitHub Actions is the release gate: `mvn clean verify` and Marketplace ZIP validation must succeed before `v0.3.0` is created.
 
 This is a community project, not an official Apache Software Foundation release.

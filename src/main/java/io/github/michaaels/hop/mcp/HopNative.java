@@ -24,7 +24,7 @@ final class HopNative {
   static Map<String,Object> deepCheck(Path file, IVariables variables, IHopMetadataProvider metadataProvider) throws Exception {
     String name = file.getFileName().toString().toLowerCase(); List<ICheckResult> remarks = new ArrayList<>();
     if (name.endsWith(".hpl")) { PipelineMeta meta = new PipelineMeta(file.toString(), metadataProvider, variables); meta.checkTransforms(remarks, false, null, variables, metadataProvider); }
-    else if (name.endsWith(".hwf")) { WorkflowMeta meta = new WorkflowMeta(file.toString(), metadataProvider, variables); meta.checkActions(remarks, false, null, variables, metadataProvider); }
+    else if (name.endsWith(".hwf")) { WorkflowMeta meta = new WorkflowMeta(variables, file.toString(), metadataProvider); meta.checkActions(remarks, false, null, variables, metadataProvider); }
     else throw new IllegalArgumentException("Deep check supports .hpl and .hwf only");
     int errors=0,warnings=0,comments=0,ok=0,none=0; List<Map<String,Object>> issues=new ArrayList<>();
     for (ICheckResult r : remarks) { int type=r.getType(); if(type==ICheckResult.TYPE_RESULT_ERROR)errors++; else if(type==ICheckResult.TYPE_RESULT_WARNING)warnings++; else if(type==ICheckResult.TYPE_RESULT_COMMENT)comments++; else if(type==ICheckResult.TYPE_RESULT_OK)ok++; else none++; if(type!=ICheckResult.TYPE_RESULT_OK && issues.size()<500) issues.add(Map.of("type",type,"text",String.valueOf(r.getText()))); }

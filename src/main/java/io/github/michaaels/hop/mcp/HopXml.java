@@ -165,6 +165,17 @@ final class HopXml {
     return out;
   }
 
+  static String redact(String text) {
+    if (text == null || text.isBlank()) return text;
+    String redacted =
+        text.replaceAll(
+            "(?i)(authorization\\s*[:=]\\s*(?:bearer|basic)\\s+)[^\\s,;]+",
+            "$1***REDACTED***");
+    return redacted.replaceAll(
+        "(?i)([\\\"']?(?:password|passwd|pwd|token|secret|client[_-]?secret|api[_-]?key|apikey|access[_-]?key|private[_-]?key)[\\\"']?\\s*[=:]\\s*)(?:\\\"[^\\\"]*\\\"|'[^']*'|[^\\s,;}\\]]+)",
+        "$1\"***REDACTED***\"");
+  }
+
   private static List<Map<String,Object>> hops(Element root) {
     List<Map<String,Object>> out = new ArrayList<>();
     NodeList list = root.getElementsByTagName("hop");

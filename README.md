@@ -1,12 +1,12 @@
-# Apache Hop MCP 0.3.0
+# Apache Hop MCP 0.3.1
 
 Community Model Context Protocol (MCP) server plugin for **Apache Hop 2.19.x**.
 
 > This is a community project and is not an official Apache Software Foundation project.
 
-## What changed in 0.3
+## What changed in 0.3.1
 
-Version 0.3 is the Marketplace/Java edition. The MCP server runs directly in the Apache Hop JVM. Python and the v0.2 Java subprocess bridge are **not required** for the Marketplace plugin.
+Version 0.3.1 extends the native Marketplace/Java edition with bounded catalog and context tools, filtered plugin discovery, opt-in read-only Hop Web access, and stronger STDIO/classloader compatibility. Python and the v0.2 Java subprocess bridge are **not required** for the Marketplace plugin.
 
 ```text
 Codex / Claude / Qwen
@@ -27,11 +27,13 @@ Installing the plugin once makes both integrations available after restarting Ho
 
 ## Security model
 
-0.3.0 is intentionally **read-only**. It does not expose pipeline/workflow execution or mutation tools.
+0.3.x is intentionally **read-only**. It does not expose pipeline/workflow execution or mutation tools.
 
 The project root is a hard boundary. Paths are normalized and resolved with real paths so path traversal and symlinks cannot escape it. XML parsing disables DTDs and external entities. Large file reads and project scans are bounded. Secret-looking XML fields are redacted in `hop_component`.
 
 `hop_deep_check` is a special case: Apache Hop's native checker can resolve fields or contact configured databases/services. It is disabled unless the server is started with `--allow-deep-check`.
+
+Read-only Hop Web access is also opt-in. `hop_web_request` only permits `GET` and `HEAD`, confines requests to the configured base path, does not follow redirects, bounds response bodies, and redacts sensitive response data. Credentials are read from `HOP_MCP_WEB_USERNAME` / `HOP_MCP_WEB_PASSWORD` or `HOP_MCP_WEB_BEARER_TOKEN`; callers cannot supply authentication headers.
 
 ## Requirements
 
@@ -48,14 +50,14 @@ mvn -B clean verify
 The Marketplace artifact is:
 
 ```text
-target/apache-hop-mcp-0.3.0.zip
+target/apache-hop-mcp-0.3.1.zip
 ```
 
 The ZIP expands into:
 
 ```text
 plugins/misc/apache-hop-mcp/
-  apache-hop-mcp-0.3.0.jar
+  apache-hop-mcp-0.3.1.jar
   version.xml
   lib/...
 ```
@@ -64,7 +66,7 @@ Apache Hop jars are `provided` and are not bundled in the plugin ZIP.
 
 ## Marketplace installation
 
-After the `v0.3.0` GitHub Release exists, import this repository definition from the repository:
+After the `v0.3.1` GitHub Release exists, import this repository definition from the repository:
 
 ```text
 marketplace/hop-marketplace-repo.yaml
@@ -73,7 +75,7 @@ marketplace/hop-marketplace-repo.yaml
 Then use Hop Marketplace to search/install **Apache Hop MCP**, or install the exact coordinate after importing the repository:
 
 ```bash
-./hop marketplace install io.github.michaaels:apache-hop-mcp:0.3.0 --repo apache-hop-mcp
+./hop marketplace install io.github.michaaels:apache-hop-mcp:0.3.1 --repo apache-hop-mcp
 ```
 
 Restart Hop after installation.
@@ -102,6 +104,12 @@ Enable the native deep checker only when external metadata/database access is ac
 ./hop mcp --root /data/hop/project --allow-deep-check
 ```
 
+Enable read-only access to an existing Hop Web REST API:
+
+```bash
+./hop mcp --root /data/hop/project --allow-web-api --web-url http://127.0.0.1:8080/hop
+```
+
 ## Codex configuration
 
 Example `~/.codex/config.toml`:
@@ -125,9 +133,11 @@ args = ["mcp", "--root", "C:\\Hop\\project"]
 | Tool | Purpose |
 |---|---|
 | `hop_config` | server/root/security configuration |
-| `hop_plugins` | Apache Hop `PluginRegistry` inventory |
+| `hop_plugins` | filtered, paginated Apache Hop `PluginRegistry` inventory |
+| `hop_catalog` | paginated project file metadata and SHA-256 fingerprints |
 | `hop_list_definitions` | list `.hpl` / `.hwf` definitions |
 | `hop_inspect` | components, hops, SQL tables, references |
+| `hop_context` | consolidated inspection, validation and local dependencies |
 | `hop_component` | inspect one transform/action with secret redaction |
 | `hop_component_lineage` | upstream/downstream graph traversal |
 | `hop_validate` | safe structural validation |
@@ -136,6 +146,7 @@ args = ["mcp", "--root", "C:\\Hop\\project"]
 | `hop_search` | bounded text search |
 | `hop_find_table` | SQL table-reference discovery |
 | `hop_dependencies` | referenced `.hpl` / `.hwf` dependencies |
+| `hop_web_request` | bounded GET/HEAD request to a configured Hop Web API |
 
 ## AI-assisted development
 

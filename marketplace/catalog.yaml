@@ -3,7 +3,7 @@ kind: hop-marketplace-catalog
 plugins:
   - groupId: io.github.michaaels
     artifactId: apache-hop-mcp
-    version: "0.3.0"
+    version: "0.3.1"
     name: Apache Hop MCP
     category: Community / AI
     description: Native Java Model Context Protocol server for Apache Hop with the headless `hop mcp` command.

@@ -1,12 +1,12 @@
-# Apache Hop MCP 0.3.1
+# Apache Hop MCP 0.4.0
 
-Community Model Context Protocol (MCP) server plugin for **Apache Hop 2.19.x**.
+Native semantic Model Context Protocol (MCP) server plugin for **Apache Hop 2.19.x and 2.20.x**.
 
 > This is a community project and is not an official Apache Software Foundation project.
 
-## What changed in 0.3.1
+## What changed in 0.4.0
 
-Version 0.3.1 extends the native Marketplace/Java edition with bounded catalog and context tools, filtered plugin discovery, opt-in read-only Hop Web access, and stronger STDIO/classloader compatibility. Python and the v0.2 Java subprocess bridge are **not required** for the Marketplace plugin.
+Version 0.4.0 establishes the **Apache Hop Native Semantic MCP**: opt-in local execution, transactional native mutation, a machine-readable semantic capability contract, and a change-event boundary for future live Desktop/Hop Web adapters. Inspection remains enabled by default; execution and writes require separate command-line flags. Python and the v0.2 Java subprocess bridge are not required.
 
 ```text
 Codex / Claude / Qwen
@@ -18,73 +18,66 @@ Codex / Claude / Qwen
   Apache Hop JVM
   + PluginRegistry
   + PipelineMeta / WorkflowMeta
+  + local execution engines
 ```
 
 Installing the plugin once makes both integrations available after restarting Hop:
 
-- `hop mcp` / `hop.bat mcp` — headless MCP server for Codex and other MCP clients.
+- `hop mcp` / `hop.bat mcp` — headless MCP server.
 - **Tools → Apache Hop MCP…** — GUI installation/status information.
 
 ## Security model
 
-0.3.x is intentionally **read-only**. It does not expose pipeline/workflow execution or mutation tools.
+Project inspection is available by default. Pipeline/workflow execution requires `--allow-execution`, is limited to local engine run configurations, permits at most four concurrent operations, and enforces a timeout of at most 900 seconds. Parameters and returned errors/logs are redacted.
 
-The project root is a hard boundary. Paths are normalized and resolved with real paths so path traversal and symlinks cannot escape it. XML parsing disables DTDs and external entities. Large file reads and project scans are bounded. Secret-looking XML fields are redacted in `hop_component`.
+Semantic mutation requires `--allow-mutation` when changes are applied. Previews remain read-only. Existing files require an expected SHA-256 precondition. Applied changes use native Hop semantic objects, create a backup, atomically replace the definition, reload it through Hop, automatically restore the backup on validation failure, and return a session transaction ID for explicit rollback. The semantic contract includes definition metadata, component rename/move/removal, and hop add/remove/state operations.
 
-`hop_deep_check` is a special case: Apache Hop's native checker can resolve fields or contact configured databases/services. It is disabled unless the server is started with `--allow-deep-check`.
+The project root is a hard boundary. Paths are normalized and resolved with real paths so traversal and symlinks cannot escape it. XML parsing disables DTDs and external entities. File reads, scans, results, logs, operations, and traversal depth are bounded. Secret-looking values are redacted.
 
-Read-only Hop Web access is also opt-in. `hop_web_request` only permits `GET` and `HEAD`, confines requests to the configured base path, does not follow redirects, bounds response bodies, and redacts sensitive response data. Credentials are read from `HOP_MCP_WEB_USERNAME` / `HOP_MCP_WEB_PASSWORD` or `HOP_MCP_WEB_BEARER_TOKEN`; callers cannot supply authentication headers.
+`hop_deep_check` is disabled unless the server starts with `--allow-deep-check`, because Hop's native checker can resolve fields or contact configured databases/services.
 
-## Requirements
+Hop Web access remains read-only and opt-in. `hop_web_request` only permits `GET` and `HEAD`, confines requests to the configured base path, disables redirects, bounds response bodies, and redacts sensitive data. Credentials come from `HOP_MCP_WEB_USERNAME` / `HOP_MCP_WEB_PASSWORD` or `HOP_MCP_WEB_BEARER_TOKEN`; callers cannot supply authentication headers.
 
-- Apache Hop **2.19.x**
+## Requirements and build
+
+- Apache Hop **2.19.x** (release baseline) or **2.20.x**
 - Java **21**
 - MCP client with STDIO support
-
-## Build
 
 ```bash
 mvn -B clean verify
 ```
 
-The Marketplace artifact is:
+Until Hop 2.20.0 is published, compatibility can be checked against a locally installed build of Apache Hop `main`:
 
-```text
-target/apache-hop-mcp-0.3.1.zip
+```bash
+mvn -B -P hop-2.20 clean verify
 ```
 
-The ZIP expands into:
+The Marketplace artifact is `target/apache-hop-mcp-0.4.0.zip`, containing:
 
 ```text
 plugins/misc/apache-hop-mcp/
-  apache-hop-mcp-0.3.1.jar
+  apache-hop-mcp-0.4.0.jar
   version.xml
   lib/...
 ```
 
-Apache Hop jars are `provided` and are not bundled in the plugin ZIP.
+Apache Hop jars are `provided` and are not bundled.
 
 ## Marketplace installation
 
-After the `v0.3.1` GitHub Release exists, import this repository definition from the repository:
-
-```text
-marketplace/hop-marketplace-repo.yaml
-```
-
-Then use Hop Marketplace to search/install **Apache Hop MCP**, or install the exact coordinate after importing the repository:
+After the `v0.4.0` GitHub Release exists, import `marketplace/hop-marketplace-repo.yaml` into Hop Marketplace and install **Apache Hop MCP**, or use:
 
 ```bash
-./hop marketplace install io.github.michaaels:apache-hop-mcp:0.3.1 --repo apache-hop-mcp
+./hop marketplace install io.github.michaaels:apache-hop-mcp:0.4.0 --repo apache-hop-mcp
 ```
 
-Restart Hop after installation.
-
-The repository definition uses GitHub Releases through Hop 2.19's `urlTemplate` + `catalogUrl` support; no Nexus server is required.
+Restart Hop after installation. Releases are served directly from GitHub through Hop 2.19's `urlTemplate` and `catalogUrl` support.
 
 ## Headless command
 
-Linux/macOS:
+Read-only inspection:
 
 ```bash
 ./hop mcp --root /data/hop/project
@@ -96,44 +89,38 @@ Windows:
 hop.bat mcp --root C:\Hop\project
 ```
 
-If the Projects plugin is configured, Hop's normal run-category project/environment options are also loaded by the command.
+Enable local execution and transactional semantic mutation explicitly:
 
-Enable the native deep checker only when external metadata/database access is acceptable:
+```bash
+./hop mcp --root /data/hop/project --allow-execution --allow-mutation
+```
+
+Other opt-ins:
 
 ```bash
 ./hop mcp --root /data/hop/project --allow-deep-check
-```
-
-Enable read-only access to an existing Hop Web REST API:
-
-```bash
 ./hop mcp --root /data/hop/project --allow-web-api --web-url http://127.0.0.1:8080/hop
 ```
 
+If the Projects plugin is configured, Hop's normal run-category project/environment options are loaded by the command.
+
 ## Codex configuration
-
-Example `~/.codex/config.toml`:
-
-```toml
-[mcp_servers.apache-hop]
-command = "/opt/hop/hop"
-args = ["mcp", "--root", "/data/hop/project"]
-```
-
-Windows:
 
 ```toml
 [mcp_servers.apache-hop]
 command = "C:\\hop\\hop.bat"
-args = ["mcp", "--root", "C:\\Hop\\project"]
+args = ["mcp", "--root", "C:\\Hop\\project", "--allow-execution", "--allow-mutation"]
 ```
+
+Only include the opt-in flags that the MCP client should be authorized to use.
 
 ## MCP tools
 
 | Tool | Purpose |
 |---|---|
 | `hop_config` | server/root/security configuration |
-| `hop_plugins` | filtered, paginated Apache Hop `PluginRegistry` inventory |
+| `hop_capabilities` | native semantic operations, guarantees, compatibility and live-UI status |
+| `hop_plugins` | filtered, paginated Apache Hop plugin inventory |
 | `hop_catalog` | paginated project file metadata and SHA-256 fingerprints |
 | `hop_list_definitions` | list `.hpl` / `.hwf` definitions |
 | `hop_inspect` | components, hops, SQL tables, references |
@@ -141,20 +128,23 @@ args = ["mcp", "--root", "C:\\Hop\\project"]
 | `hop_component` | inspect one transform/action with secret redaction |
 | `hop_component_lineage` | upstream/downstream graph traversal |
 | `hop_validate` | safe structural validation |
-| `hop_deep_check` | native Apache Hop checker; explicit opt-in |
+| `hop_deep_check` | native Hop checker; explicit opt-in |
 | `hop_read_text` | bounded project file read |
 | `hop_search` | bounded text search |
 | `hop_find_table` | SQL table-reference discovery |
 | `hop_dependencies` | referenced `.hpl` / `.hwf` dependencies |
+| `hop_execute` | execute a pipeline/workflow locally and wait for its bounded result |
+| `hop_start_execution` | start a bounded local execution asynchronously |
+| `hop_execution_status` | read asynchronous execution state/result |
+| `hop_stop_execution` | request asynchronous execution cancellation |
+| `hop_logs` | read bounded, redacted Hop execution logs |
+| `hop_mutate_definition` | preview/apply transactional native semantic changes |
+| `hop_rollback_mutation` | roll back an applied mutation from this MCP session |
 | `hop_web_request` | bounded GET/HEAD request to a configured Hop Web API |
 
 ## AI-assisted development
 
-Codex and other repository agents should read [`AGENTS.md`](AGENTS.md). Detailed Cloud/CLI build instructions are in [`docs/AI_DEVELOPMENT.md`](docs/AI_DEVELOPMENT.md).
-
-## Roadmap
-
-0.4 is intended to add **native semantic mutation** with explicit write opt-in, content-hash preconditions, preview/diff, backup, atomic replace, reload validation, and rollback.
+Repository agents should read [`AGENTS.md`](AGENTS.md). Detailed build instructions are in [`docs/AI_DEVELOPMENT.md`](docs/AI_DEVELOPMENT.md).
 
 ## License
 

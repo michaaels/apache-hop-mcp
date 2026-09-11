@@ -2,18 +2,22 @@
 
 ## Supported version
 
-The current supported development line is 0.3.x on Apache Hop 2.19.x / Java 21.
+The current supported development line is 0.4.x on Apache Hop 2.19.x and 2.20.x / Java 21. Apache Hop 2.19.0 remains the release compile baseline until 2.20.0 is published.
 
 ## Design assumptions
 
-Apache Hop pipeline/workflow definitions can contain executable behavior. Treat untrusted `.hpl`, `.hwf`, scripts, SQL, metadata and plugin configurations as untrusted code/data.
+Apache Hop pipeline/workflow definitions can contain executable behavior. Treat untrusted `.hpl`, `.hwf`, scripts, SQL, metadata, parameters, and plugin configurations as untrusted code/data. Do not expose the STDIO process directly to untrusted remote users.
 
-0.3.x exposes read-only project-inspection tools. It does not expose execution or mutation MCP tools.
+Inspection is enabled by default. Local execution and applied semantic mutation are disabled unless the administrator starts the server with `--allow-execution` or `--allow-mutation`, respectively.
 
-Optional Hop Web access remains read-only in 0.3.x: only GET and HEAD are accepted. Requests are confined to an administrator-configured base URL, redirects are disabled, caller-provided authentication headers are rejected, and sensitive response data is redacted. Do not expose the STDIO process directly to untrusted remote users.
+Execution accepts only local Apache Hop run configurations and is bounded by concurrency and timeout limits. Executing a definition can still access databases, services, files, scripts, and other resources available to the Hop process; only authorize trusted clients and projects.
 
-The native deep checker is disabled by default because some Hop transforms/actions may inspect fields or contact configured external systems while checking.
+Mutation is limited to supported operations on native Hop semantic objects. Existing definitions require an expected SHA-256. Applied changes are backed up, atomically replaced, reloaded by Hop, automatically restored if validation fails, and can be rolled back during the same MCP session with a current-hash precondition.
+
+Optional Hop Web access remains read-only: only GET and HEAD are accepted. Requests stay under an administrator-configured base URL, redirects are disabled, caller-provided authentication headers are rejected, and sensitive response data is redacted.
+
+The native deep checker is disabled by default because some transforms/actions may inspect fields or contact configured external systems while checking.
 
 ## Reporting
 
-For a suspected vulnerability, avoid posting credentials, production configuration or exploit data in a public issue. Contact the repository owner privately through GitHub first and provide the minimum reproduction needed.
+For a suspected vulnerability, avoid posting credentials, production configuration, or exploit data in a public issue. Contact the repository owner privately through GitHub first and provide the minimum reproduction needed.

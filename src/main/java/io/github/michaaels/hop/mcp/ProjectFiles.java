@@ -80,7 +80,23 @@ final class ProjectFiles {
     try (Stream<Path> s = Files.walk(root)) { for (Path p : (Iterable<Path>) s.filter(path -> Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS))::iterator) { if (++scanned[0] > MAX_SCAN_FILES || out.size() >= MAX_RESULTS) break; String rel = relative(p); if (!filter.matcher(rel).matches()) continue; long size; try { size = Files.size(p); } catch (IOException e) { continue; } if (size > MAX_READ_BYTES) continue; List<String> lines; try { lines = Files.readAllLines(p, StandardCharsets.UTF_8); } catch (Exception e) { continue; } for (int i=0; i<lines.size() && out.size()<MAX_RESULTS; i++) { if (lines.get(i).toLowerCase(Locale.ROOT).contains(needle)) out.add(Map.of("path", rel, "line", i+1, "text", truncate(lines.get(i), 500))); } } }
     return out;
   }
-  private static String sha256(byte[] bytes) throws IOException { try { return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes)); } catch(NoSuchAlgorithmException e) { throw new IOException("SHA-256 is unavailable",e); } }
+  Path resolveForWrite(String relative) throws IOException {
+    if (relative == null || relative.isBlank()) throw new IOException("path is required");
+    Path candidate = root.resolve(relative).normalize();
+    if (!candidate.startsWith(root)) throw new IOException("Path escapes project root");
+    Path parent = candidate.getParent();
+    if (parent == null || !Files.isDirectory(parent, LinkOption.NOFOLLOW_LINKS)) throw new IOException("Parent directory not found: " + relative);
+    Path realParent = parent.toRealPath();
+    if (!realParent.startsWith(root)) throw new IOException("Parent directory escapes project root");
+    if (Files.exists(candidate, LinkOption.NOFOLLOW_LINKS)) {
+      if (Files.isSymbolicLink(candidate) || !Files.isRegularFile(candidate, LinkOption.NOFOLLOW_LINKS)) throw new IOException("Not a regular file: " + relative);
+      Path real = candidate.toRealPath();
+      if (!real.startsWith(root)) throw new IOException("Resolved path escapes project root");
+    }
+    return candidate;
+  }
+  byte[] readBytes(Path path) throws IOException { long size=Files.size(path); if(size>MAX_READ_BYTES)throw new IOException("File exceeds read limit: "+size+" bytes"); return Files.readAllBytes(path); }
+  static String sha256(byte[] bytes) throws IOException { try { return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes)); } catch(NoSuchAlgorithmException e) { throw new IOException("SHA-256 is unavailable",e); } }
   private static String extension(String path) { int dot = path.lastIndexOf('.'); return dot < 0 ? "" : path.substring(dot + 1).toLowerCase(Locale.ROOT); }
   private static String fileKind(String path) { return switch (extension(path)) { case "hpl" -> "pipeline"; case "hwf" -> "workflow"; case "ktr" -> "kettle_pipeline"; case "kjb" -> "kettle_workflow"; case "csv" -> "csv"; case "json", "xml", "yaml", "yml", "properties" -> "metadata"; case "txt", "sql", "md", "log" -> "text"; default -> "file"; }; }
   private static Pattern globToPattern(String glob) { StringBuilder r = new StringBuilder("^"); for (int i=0;i<glob.length();i++) { char c=glob.charAt(i); if (c=='*') { if (i+1<glob.length() && glob.charAt(i+1)=='*') { r.append(".*"); i++; } else r.append("[^/]*"); } else if (c=='?') r.append('.'); else if ("\\.[]{}()+-^$|".indexOf(c)>=0) r.append('\\').append(c); else r.append(c=='\\' ? '/' : c); } return Pattern.compile(r.append('$').toString(), Pattern.CASE_INSENSITIVE); }

@@ -198,7 +198,7 @@ final class HopWebClient {
   private static String normalizeMethod(String method) {
     String value = method == null || method.isBlank() ? "GET" : method.toUpperCase(Locale.ROOT);
     if (!ALLOWED_METHODS.contains(value)) {
-      throw new SecurityException("Only GET and HEAD Hop Web requests are allowed in 0.3.x");
+      throw new SecurityException("Only GET and HEAD Hop Web requests are allowed");
     }
     return value;
   }

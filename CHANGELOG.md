@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.4.0 - 2026-09-10
+
+- Added opt-in synchronous and asynchronous local pipeline/workflow execution.
+- Added bounded execution concurrency, timeouts, status, cancellation, and redacted Hop logs.
+- Added previewable native semantic mutation for definition metadata, component names, and hop enabled state.
+- Added native component move/removal and hop add/removal operations.
+- Added `hop_capabilities` and a semantic change-event boundary for Desktop/Hop Web adapters.
+- Verified the same source against Hop 2.19.0 and the current 2.20.0-SNAPSHOT line.
+- Added SHA-256 preconditions, backups, atomic replacement, native reload validation, automatic recovery, and explicit session rollback.
+- Kept Hop Web read-only and separated execution and mutation authorization flags.
+- Added tests for mutation preview, apply, rollback, traversal protection, operation bounds, and opt-in enforcement.
+
 ## 0.3.1 - 2026-09-08
 
 - Added bounded, paginated project cataloging with file metadata and SHA-256 fingerprints.

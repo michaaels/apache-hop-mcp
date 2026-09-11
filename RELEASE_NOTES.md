@@ -1,17 +1,17 @@
-# Apache Hop MCP 0.3.1 — Read-only context and Hop Web integration
+# Apache Hop MCP 0.4.0 — Local execution and transactional semantic mutation
 
-Maintenance release of the native-Java Marketplace edition.
+First release that can safely run and modify Apache Hop definitions through MCP when explicitly authorized.
 
-- One Marketplace plugin installs both the Hop GUI integration and `hop mcp` headless command.
-- Runs directly in the Apache Hop JVM on Java 21; Python and the old Java subprocess bridge are not required.
-- Uses MCP Java SDK 2.0.1 over STDIO.
-- Ships 15 read-only tools for project inspection, cataloging, consolidated context, search, lineage, validation, plugin inventory, dependencies and opt-in Hop Web GET/HEAD access.
-- Constrains filesystem access to a configured project root and uses a hardened XML parser.
-- Redacts secret-looking fields from component inspection.
-- Starts correctly from Hop's isolated plugin classloader without relying on Java `ServiceLoader` visibility.
-- Keeps STDIO stdout protocol-only, including Hop `LogChannel` messages, and redacts sensitive Hop Web response headers.
-- Apache Hop native deep checking is opt-in because it can access configured external systems.
-- Built against Apache Hop 2.19.0 and intended for the 2.19.x line.
-- GitHub Actions is the release gate: `mvn clean verify` and Marketplace ZIP validation must succeed before `v0.3.1` is created.
+- Adds synchronous and asynchronous local pipeline/workflow execution, status, cancellation, bounded concurrency, timeouts, and redacted logs.
+- Restricts MCP execution to local Apache Hop engine run configurations; remote engines are rejected.
+- Adds previewable native semantic mutations for names, descriptions, component rename/move/removal, and hop add/remove/enabled state.
+- Exposes `hop_capabilities` as a machine-readable semantic contract and introduces a change-event boundary for future live Desktop/Hop Web adapters.
+- Requires SHA-256 preconditions for existing definitions and performs backup, atomic replacement, native reload validation, automatic failure recovery, and explicit session rollback.
+- Keeps execution and applied mutation disabled by default behind separate `--allow-execution` and `--allow-mutation` flags.
+- Keeps Hop Web access read-only (`GET` / `HEAD`) and opt-in.
+- Preserves project-root confinement, hardened XML parsing, bounded reads/results, and secret redaction.
+- Runs directly in the Apache Hop JVM on Java 21 with MCP Java SDK 2.0.1 over STDIO; no Python or Java subprocess bridge is required.
+- Built against Apache Hop 2.19.0 and compatibility-tested against the current Apache Hop 2.20.0-SNAPSHOT line.
+- GitHub Actions runs `mvn -B clean verify` and validates the Marketplace ZIP before creating `v0.4.0`.
 
 This is a community project, not an official Apache Software Foundation release.

@@ -34,7 +34,7 @@ final class HopSemanticCapabilities {
     result.put("live_ui_status", liveUiAvailable ? "connected" : "headless_not_connected");
     result.put("live_ui_adapter", "project_event_bridge");
     result.put("live_ui_dirty_tab_policy", "never_overwrite");
-    result.put("live_ui_supported_clients", List.of("desktop"));
+    result.put("live_ui_supported_clients", List.of("desktop", "web"));
     result.put("tested_hop_versions", List.of("2.19.0", "2.20.0-SNAPSHOT"));
     return result;
   }

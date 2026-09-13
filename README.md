@@ -6,7 +6,7 @@ Native semantic Model Context Protocol (MCP) server plugin for **Apache Hop 2.19
 
 ## What changed in 0.4.0
 
-Version 0.4.0 establishes the **Apache Hop Native Semantic MCP**: opt-in local execution, transactional native mutation, a machine-readable semantic capability contract, and live synchronization with Hop Desktop. Inspection remains enabled by default; execution and writes require separate command-line flags. Python and the v0.2 Java subprocess bridge are not required.
+Version 0.4.0 establishes the **Apache Hop Native Semantic MCP**: opt-in local execution, transactional native mutation, a machine-readable semantic capability contract, and live synchronization with Hop Desktop and Hop Web. Inspection remains enabled by default; execution and writes require separate command-line flags. Python and the v0.2 Java subprocess bridge are not required.
 
 ```text
 Codex / Claude / Qwen
@@ -24,11 +24,11 @@ Codex / Claude / Qwen
 Installing the plugin once makes both integrations available after restarting Hop:
 
 - `hop mcp` / `hop.bat mcp` — headless MCP server.
-- **Tools → Apache Hop MCP live synchronization...** — start or stop the Desktop adapter.
+- **Tools → Apache Hop MCP live synchronization...** — start or stop the adapter for the current Desktop process or Hop Web browser session.
 
-## Hop Desktop live synchronization
+## Hop Desktop and Hop Web live synchronization
 
-Open the same project in Hop Desktop and select **Tools → Apache Hop MCP live synchronization...**. While that session is active, semantic changes made by `hop mcp --allow-mutation` against the same project root are reflected through native Hop UI APIs:
+Open the same project in Hop Desktop or Hop Web and select **Tools → Apache Hop MCP live synchronization...**. While that UI session is active, semantic changes made by `hop mcp --allow-mutation` against the same project root are reflected through native Hop UI APIs:
 
 - an already-open definition is reloaded from disk;
 - a changed definition that is not open is opened in the Explorer perspective;
@@ -37,7 +37,7 @@ Open the same project in Hop Desktop and select **Tools → Apache Hop MCP live 
 
 The bridge uses bounded, short-lived control events under `.hop-mcp/`. These files contain only project-relative definition paths, event identifiers and SHA-256 fingerprints. They are excluded from MCP catalog, search, read and mutation tools. Session heartbeats expire automatically after 45 seconds, and events expire after 24 hours.
 
-Live synchronization is explicit and session-scoped. It does not expose a network listener and it is not a replacement for authentication or transport security. Hop Web/RAP requires a separate per-user session adapter and is not enabled by this Desktop implementation.
+Live synchronization is explicit and session-scoped. Hop Web creates a separate RAP adapter for each browser session and uses Hop's server-push facade; no plugin code accesses RAP internals directly. If multiple users explicitly subscribe to the same project, each session receives the same project event but applies its own dirty-tab check and acknowledgement. Session identifiers are never returned by MCP tools. The bridge does not expose a network listener and is not a replacement for authentication or transport security.
 
 ## Security model
 
@@ -133,7 +133,7 @@ Only include the opt-in flags that the MCP client should be authorized to use.
 |---|---|
 | `hop_config` | server/root/security configuration |
 | `hop_capabilities` | native semantic operations, guarantees, compatibility and live-UI status |
-| `hop_live_ui_status` | active Desktop sessions and mutation delivery acknowledgements |
+| `hop_live_ui_status` | active Desktop/Web sessions and mutation delivery acknowledgements |
 | `hop_plugins` | filtered, paginated Apache Hop plugin inventory |
 | `hop_catalog` | paginated project file metadata and SHA-256 fingerprints |
 | `hop_list_definitions` | list `.hpl` / `.hwf` definitions |

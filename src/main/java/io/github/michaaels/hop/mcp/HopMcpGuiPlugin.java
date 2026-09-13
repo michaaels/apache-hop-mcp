@@ -2,6 +2,8 @@ package io.github.michaaels.hop.mcp;
 
 import java.io.IOException;
 import java.nio.file.Path;
+import java.util.IdentityHashMap;
+import java.util.Map;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.hop.core.gui.plugin.GuiPlugin;
 import org.apache.hop.core.gui.plugin.menu.GuiMenuElement;
@@ -9,12 +11,12 @@ import org.apache.hop.ui.hopgui.HopGui;
 import org.eclipse.swt.SWT;
 import org.eclipse.swt.widgets.MessageBox;
 
-/** Hop Desktop entry point for explicit, session-scoped MCP live synchronization. */
+/** Hop Desktop and Hop Web entry point for explicit, session-scoped MCP live synchronization. */
 @GuiPlugin
 public class HopMcpGuiPlugin {
   public static final String MENU_ID = "40250-menu-tools-apache-hop-mcp";
 
-  private static HopDesktopLiveSync liveSync;
+  private static final Map<HopGui, HopLiveUiSync> LIVE_SYNCS = new IdentityHashMap<>();
 
   @GuiMenuElement(
       root = HopGui.ID_MAIN_MENU,
@@ -26,28 +28,28 @@ public class HopMcpGuiPlugin {
   public void toggleLiveSynchronization() {
     HopGui hopGui = HopGui.getInstance();
     synchronized (HopMcpGuiPlugin.class) {
+      HopLiveUiSync liveSync = LIVE_SYNCS.get(hopGui);
       if (liveSync != null && liveSync.isRunning()) {
-        stopLiveSynchronization(hopGui);
+        stopLiveSynchronization(hopGui, liveSync);
       } else {
         startLiveSynchronization(hopGui);
       }
     }
   }
 
-  static synchronized boolean isLiveSynchronizationRunning() {
-    return liveSync != null && liveSync.isRunning();
-  }
-
   private static void startLiveSynchronization(HopGui hopGui) {
     try {
       Path projectRoot = determineProjectRoot(hopGui);
-      HopDesktopLiveSync candidate = new HopDesktopLiveSync(hopGui, projectRoot);
+      HopLiveUiSync candidate =
+          HopLiveUiSyncFactory.create(hopGui, projectRoot, () -> removeLiveSynchronization(hopGui));
       candidate.start();
-      liveSync = candidate;
+      LIVE_SYNCS.put(hopGui, candidate);
       showInformation(
           hopGui,
           "Apache Hop MCP live synchronization",
-          "Live synchronization is running for:\n\n"
+          "Live synchronization for "
+              + clientLabel(candidate)
+              + " is running for:\n\n"
               + projectRoot
               + "\n\nSemantic MCP changes will open or refresh Hop definitions. "
               + "Tabs with unsaved changes are never overwritten.");
@@ -60,12 +62,13 @@ public class HopMcpGuiPlugin {
     }
   }
 
-  private static void stopLiveSynchronization(HopGui hopGui) {
+  private static void stopLiveSynchronization(HopGui hopGui, HopLiveUiSync liveSync) {
     try {
       liveSync.close();
-      liveSync = null;
       showInformation(
-          hopGui, "Apache Hop MCP live synchronization", "Live synchronization has stopped.");
+          hopGui,
+          "Apache Hop MCP live synchronization",
+          "Live synchronization for " + clientLabel(liveSync) + " has stopped.");
     } catch (IOException e) {
       hopGui.getLog().logError("Unable to stop Apache Hop MCP live synchronization", e);
       showError(
@@ -73,6 +76,14 @@ public class HopMcpGuiPlugin {
           "Apache Hop MCP",
           "Live synchronization could not be stopped cleanly. See the Hop log for details.");
     }
+  }
+
+  private static synchronized void removeLiveSynchronization(HopGui hopGui) {
+    LIVE_SYNCS.remove(hopGui);
+  }
+
+  private static String clientLabel(HopLiveUiSync liveSync) {
+    return "web".equals(liveSync.clientType()) ? "Hop Web" : "Hop Desktop";
   }
 
   private static Path determineProjectRoot(HopGui hopGui) {

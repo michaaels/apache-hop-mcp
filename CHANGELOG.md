@@ -6,7 +6,7 @@
 - Added bounded execution concurrency, timeouts, status, cancellation, and redacted Hop logs.
 - Added previewable native semantic mutation for definition metadata, component names, and hop enabled state.
 - Added native component move/removal and hop add/removal operations.
-- Added `hop_capabilities` and a session-aware live synchronization adapter for Hop Desktop.
+- Added `hop_capabilities` and session-aware live synchronization adapters for Hop Desktop and Hop Web/RAP.
 - Added a bounded project event bridge with expiring heartbeats, acknowledgements, atomic event writes, and dirty-tab protection.
 - Excluded the internal `.hop-mcp` control directory from project catalog, search, read, and mutation tools.
 - Verified the same source against Hop 2.19.0 and the current 2.20.0-SNAPSHOT line.

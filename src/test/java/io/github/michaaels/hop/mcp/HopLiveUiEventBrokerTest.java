@@ -28,7 +28,8 @@ class HopLiveUiEventBrokerTest {
     assertFalse(publisher.isAvailable());
     assertFalse(publisher.publish(semanticEvent));
 
-    try (HopLiveUiEventBroker.LiveSession session = consumer.openSession("desktop")) {
+    try (HopLiveUiEventBroker.LiveSession session = consumer.openSession("desktop");
+        HopLiveUiEventBroker.LiveSession webSession = consumer.openSession("web")) {
       assertTrue(publisher.isAvailable());
       assertTrue(publisher.publish(semanticEvent));
 
@@ -43,11 +44,12 @@ class HopLiveUiEventBrokerTest {
       consumer.acknowledge(session, event, "reloaded", "Reloaded safely");
       Map<String, Object> status = publisher.status(semanticEvent.transactionId());
       assertEquals(true, status.get("available"));
-      assertEquals(1, status.get("active_sessions"));
+      assertEquals(2, status.get("active_sessions"));
+      assertEquals(Map.of("desktop", 1, "web", 1), status.get("active_clients"));
       assertEquals(1, status.get("acknowledgement_count"));
-      assertEquals(
-          "reloaded",
-          ((Map<?, ?>) ((List<?>) status.get("acknowledgements")).get(0)).get("status"));
+      Map<?, ?> acknowledgement = (Map<?, ?>) ((List<?>) status.get("acknowledgements")).get(0);
+      assertEquals("reloaded", acknowledgement.get("status"));
+      assertEquals("desktop", acknowledgement.get("client_type"));
       try (var paths =
           Files.list(
               projectRoot

@@ -92,7 +92,7 @@ final class HopLiveUiEventBroker implements HopSemanticEventSink {
   @Override
   public synchronized boolean isAvailable() {
     try {
-      return activeSessionCount() > 0;
+      return !activeSessionsByClient().isEmpty();
     } catch (IOException ignored) {
       return false;
     }
@@ -116,10 +116,12 @@ final class HopLiveUiEventBroker implements HopSemanticEventSink {
     List<Map<String, Object>> acknowledgements =
         readAcknowledgements(matchingEventIds, normalizedTransactionId.isBlank());
     Map<String, Object> result = new LinkedHashMap<>();
-    int activeSessions = activeSessionCount();
+    Map<String, Integer> activeClients = activeSessionsByClient();
+    int activeSessions = activeClients.values().stream().mapToInt(Integer::intValue).sum();
     result.put("available", activeSessions > 0);
     result.put("adapter", "project_event_bridge");
     result.put("active_sessions", activeSessions);
+    result.put("active_clients", activeClients);
     result.put("transaction_id", normalizedTransactionId);
     result.put("acknowledgements", acknowledgements);
     result.put("acknowledgement_count", acknowledgements.size());
@@ -189,6 +191,7 @@ final class HopLiveUiEventBroker implements HopSemanticEventSink {
     values.setProperty("format", "1");
     values.setProperty("event_id", event.eventId());
     values.setProperty("session_id", session.id());
+    values.setProperty("client_type", session.clientType());
     values.setProperty("acknowledged_at", Long.toString(System.currentTimeMillis()));
     values.setProperty("status", normalizedStatus);
     values.setProperty("message", sanitizeMessage(message));
@@ -196,27 +199,35 @@ final class HopLiveUiEventBroker implements HopSemanticEventSink {
         acknowledgementsDirectory.resolve(event.eventId() + "-" + session.id() + ".ack"), values);
   }
 
-  private int activeSessionCount() throws IOException {
+  private Map<String, Integer> activeSessionsByClient() throws IOException {
     if (!isSecureDirectory(sessionsDirectory)) {
-      return 0;
+      return Map.of();
     }
     cleanupControlFiles(sessionsDirectory, ".session", SESSION_TTL, MAX_SESSION_FILES);
     long newestAllowed = System.currentTimeMillis() - SESSION_TTL.toMillis();
-    int active = 0;
+    Map<String, Integer> active = new LinkedHashMap<>();
     try (Stream<Path> paths = Files.list(sessionsDirectory)) {
-      for (Path path : paths.limit(MAX_SESSION_FILES).toList()) {
-        if (!isRegularControlFile(path, ".session")) {
-          continue;
-        }
+      for (Path path :
+          paths
+              .filter(candidate -> isRegularControlFile(candidate, ".session"))
+              .limit(MAX_SESSION_FILES)
+              .toList()) {
         if (Files.getLastModifiedTime(path, LinkOption.NOFOLLOW_LINKS).toMillis()
             >= newestAllowed) {
-          active++;
+          try {
+            Properties values = readProperties(path, ".session");
+            String clientType = normalizeClientType(values.getProperty("client_type"));
+            requireUuid(values.getProperty("session_id"), "session_id");
+            active.merge(clientType, 1, Integer::sum);
+          } catch (RuntimeException | IOException ignored) {
+            // Invalid session markers never make the bridge available.
+          }
         } else {
           Files.deleteIfExists(path);
         }
       }
     }
-    return active;
+    return Map.copyOf(active);
   }
 
   private List<Map<String, Object>> readAcknowledgements(
@@ -236,7 +247,7 @@ final class HopLiveUiEventBroker implements HopSemanticEventSink {
     List<Map<String, Object>> acknowledgements = new ArrayList<>();
     for (Path file : files) {
       try {
-        Properties values = readProperties(file);
+        Properties values = readProperties(file, ".ack");
         String eventId = requireUuid(values.getProperty("event_id"), "event_id");
         if (!includeAll && !matchingEventIds.contains(eventId)) {
           continue;
@@ -246,6 +257,7 @@ final class HopLiveUiEventBroker implements HopSemanticEventSink {
         acknowledgement.put(
             "acknowledged_at", Long.parseLong(values.getProperty("acknowledged_at")));
         acknowledgement.put("status", normalizeAcknowledgementStatus(values.getProperty("status")));
+        acknowledgement.put("client_type", normalizeClientType(values.getProperty("client_type")));
         acknowledgement.put("message", sanitizeMessage(values.getProperty("message")));
         acknowledgements.add(acknowledgement);
       } catch (RuntimeException | IOException ignored) {
@@ -312,7 +324,7 @@ final class HopLiveUiEventBroker implements HopSemanticEventSink {
   }
 
   private LiveEvent readEvent(Path eventFile) throws IOException {
-    Properties values = readProperties(eventFile);
+    Properties values = readProperties(eventFile, ".event");
     if (!"1".equals(values.getProperty("format"))) {
       throw new IOException("Unsupported live UI event format");
     }
@@ -331,9 +343,8 @@ final class HopLiveUiEventBroker implements HopSemanticEventSink {
     }
   }
 
-  private Properties readProperties(Path file) throws IOException {
-    if (!isRegularControlFile(
-        file, file.getFileName().toString().endsWith(".ack") ? ".ack" : ".event")) {
+  private Properties readProperties(Path file, String suffix) throws IOException {
+    if (!isRegularControlFile(file, suffix)) {
       throw new IOException("Invalid live UI control file");
     }
     byte[] content = Files.readAllBytes(file);

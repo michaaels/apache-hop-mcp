@@ -32,8 +32,7 @@ class HopWebClientTest {
           exchange.getResponseHeaders().add("Set-Cookie", "session=secret");
           exchange.getResponseHeaders().add("X-Api-Key", "header-secret");
           byte[] response =
-              "{\"ok\":true,\"token\":\"server-secret\"}"
-                  .getBytes(StandardCharsets.UTF_8);
+              "{\"ok\":true,\"token\":\"server-secret\"}".getBytes(StandardCharsets.UTF_8);
           exchange.sendResponseHeaders(200, response.length);
           exchange.getResponseBody().write(response);
           exchange.close();
@@ -50,8 +49,7 @@ class HopWebClientTest {
   void requestUsesConfiguredBasePathAndRedactsSensitiveData() throws Exception {
     HopWebClient client = new HopWebClient(baseUrl(), "user", "pass", null, 5);
 
-    Map<String, Object> result =
-        client.request("GET", "/status?token=caller-secret", Map.of());
+    Map<String, Object> result = client.request("GET", "/status?token=caller-secret", Map.of());
 
     assertEquals("/hop/status?token=caller-secret", requestPath.get());
     assertEquals("Basic dXNlcjpwYXNz", authorization.get());
@@ -70,14 +68,11 @@ class HopWebClientTest {
     HopWebClient client = new HopWebClient(baseUrl(), null, null, null, 5);
 
     assertThrows(
-        IllegalArgumentException.class,
-        () -> client.request("GET", "../status", Map.of()));
+        IllegalArgumentException.class, () -> client.request("GET", "../status", Map.of()));
     assertThrows(
         IllegalArgumentException.class,
         () -> client.request("GET", "http://127.0.0.1/status", Map.of()));
-    assertThrows(
-        SecurityException.class,
-        () -> client.request("POST", "/status", Map.of()));
+    assertThrows(SecurityException.class, () -> client.request("POST", "/status", Map.of()));
   }
 
   @Test
@@ -86,9 +81,7 @@ class HopWebClientTest {
 
     assertThrows(
         IllegalArgumentException.class,
-        () ->
-            client.request(
-                "GET", "/status", Map.of("Authorization", "Bearer secret")));
+        () -> client.request("GET", "/status", Map.of("Authorization", "Bearer secret")));
   }
 
   private String baseUrl() {

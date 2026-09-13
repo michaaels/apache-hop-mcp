@@ -1,16 +1,39 @@
 package io.github.michaaels.hop.mcp;
 
+import java.io.IOException;
 import java.util.List;
 import java.util.Map;
 
-/**
- * Boundary between headless semantic changes and a future Hop Desktop/RAP session adapter.
- * Implementations must enqueue UI work on the owning UI session and return immediately.
- */
+/** Boundary between semantic changes and session-aware Hop user interfaces. */
 interface HopSemanticEventSink {
-  HopSemanticEventSink NONE = event -> false;
+  HopSemanticEventSink NONE =
+      new HopSemanticEventSink() {
+        @Override
+        public boolean publish(Event event) {
+          return false;
+        }
+      };
 
+  /** Publishes an event without blocking on UI work. */
   boolean publish(Event event);
+
+  /** Returns whether at least one UI session is currently available to consume events. */
+  default boolean isAvailable() {
+    return false;
+  }
+
+  /** Returns transport-specific delivery state without exposing UI session identifiers. */
+  default Map<String, Object> status(String transactionId) throws IOException {
+    return Map.of(
+        "available",
+        false,
+        "adapter",
+        "none",
+        "transaction_id",
+        transactionId == null ? "" : transactionId,
+        "acknowledgements",
+        List.of());
+  }
 
   record Event(
       String type,

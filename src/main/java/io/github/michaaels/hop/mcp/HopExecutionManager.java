@@ -64,16 +64,16 @@ final class HopExecutionManager implements AutoCloseable {
                           timeoutSeconds,
                           job.logChannelId);
                   job.state =
-                      Boolean.TRUE.equals(job.result.get("timed_out"))
-                          ? "timed_out"
-                          : "completed";
+                      Boolean.TRUE.equals(job.result.get("timed_out")) ? "timed_out" : "completed";
                 } catch (InterruptedException e) {
                   Thread.currentThread().interrupt();
                   job.state = job.stopRequested ? "stopped" : "failed";
                   job.error =
                       Map.of(
-                          "error", e.getClass().getSimpleName(),
-                          "message", "Execution interrupted");
+                          "error",
+                          e.getClass().getSimpleName(),
+                          "message",
+                          "Execution interrupted");
                 } catch (Exception e) {
                   job.state = job.stopRequested ? "stopped" : "failed";
                   job.error =

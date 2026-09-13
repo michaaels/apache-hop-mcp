@@ -14,6 +14,10 @@ Execution accepts only local Apache Hop run configurations and is bounded by con
 
 Mutation is limited to supported operations on native Hop semantic objects. Existing definitions require an expected SHA-256. Applied changes are backed up, atomically replaced, reloaded by Hop, automatically restored if validation fails, and can be rolled back during the same MCP session with a current-hash precondition.
 
+Hop Desktop live synchronization is disabled until a user explicitly starts it from the Tools menu. The bridge stores only relative definition paths, transaction identifiers, timestamps, and SHA-256 fingerprints under `.hop-mcp/`; it does not serialize Hop metadata or operation values. Control files are bounded, atomically written, rejected when symlinked, expire automatically, and are inaccessible through MCP project tools. UI work is dispatched on the SWT session thread, and dirty tabs are never reloaded or closed.
+
+The Desktop bridge assumes the MCP process and Hop Desktop trust the same project filesystem. It does not create a network endpoint. Hop Web needs a separate authenticated, per-user RAP session adapter and is not covered by the Desktop session marker.
+
 Optional Hop Web access remains read-only: only GET and HEAD are accepted. Requests stay under an administrator-configured base URL, redirects are disabled, caller-provided authentication headers are rejected, and sensitive response data is redacted.
 
 The native deep checker is disabled by default because some transforms/actions may inspect fields or contact configured external systems while checking.

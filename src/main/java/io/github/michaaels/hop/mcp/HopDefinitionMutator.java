@@ -67,8 +67,7 @@ final class HopDefinitionMutator {
     List<Map<String, Object>> requestedOperations =
         operations == null ? List.of() : List.copyOf(operations);
     if (requestedOperations.size() > MAX_OPERATIONS) {
-      throw new IllegalArgumentException(
-          "operations cannot exceed " + MAX_OPERATIONS + " entries");
+      throw new IllegalArgumentException("operations cannot exceed " + MAX_OPERATIONS + " entries");
     }
 
     Path target = files.resolveForWrite(relative);
@@ -136,7 +135,8 @@ final class HopDefinitionMutator {
 
     String transactionId = UUID.randomUUID().toString();
     retainTransaction(
-        new MutationRecord(transactionId, relative, kind, target, backup, existed, oldHash, newHash));
+        new MutationRecord(
+            transactionId, relative, kind, target, backup, existed, oldHash, newHash));
     result.put("applied", true);
     result.put("preview", false);
     result.put("backup", backup == null ? "" : files.relative(backup));
@@ -290,9 +290,7 @@ final class HopDefinitionMutator {
     }
     String lower = relative.toLowerCase(Locale.ROOT);
     String inferred =
-        lower.endsWith(".hpl")
-            ? "pipeline"
-            : lower.endsWith(".hwf") ? "workflow" : null;
+        lower.endsWith(".hpl") ? "pipeline" : lower.endsWith(".hwf") ? "workflow" : null;
     if (inferred == null) {
       throw new IllegalArgumentException("Native mutation supports .hpl and .hwf definitions only");
     }
@@ -318,10 +316,7 @@ final class HopDefinitionMutator {
   private static void move(Path source, Path target) throws IOException {
     try {
       Files.move(
-          source,
-          target,
-          StandardCopyOption.ATOMIC_MOVE,
-          StandardCopyOption.REPLACE_EXISTING);
+          source, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
     } catch (AtomicMoveNotSupportedException e) {
       Files.move(source, target, StandardCopyOption.REPLACE_EXISTING);
     }
@@ -387,7 +382,8 @@ final class HopDefinitionMutator {
           String component = required(operation, "component");
           String next = required(operation, "new_name");
           TransformMeta transform = meta.findTransform(component, null);
-          if (transform == null) throw new IllegalArgumentException("Unknown transform: " + component);
+          if (transform == null)
+            throw new IllegalArgumentException("Unknown transform: " + component);
           if (meta.findTransform(next, transform) != null) {
             throw new IllegalArgumentException("Transform name already exists: " + next);
           }
@@ -412,7 +408,8 @@ final class HopDefinitionMutator {
             throw new IllegalArgumentException("Hop already exists: " + from + " -> " + to);
           }
           boolean enabled = optionalBoolean(operation, "enabled", true);
-          meta.addPipelineHop(meta.nrPipelineHops(), new PipelineHopMeta(fromMeta, toMeta, enabled));
+          meta.addPipelineHop(
+              meta.nrPipelineHops(), new PipelineHopMeta(fromMeta, toMeta, enabled));
           yield Map.of("operation", name, "from", from, "to", to, "enabled", enabled);
         }
         case "remove_hop" -> {
@@ -524,12 +521,18 @@ final class HopDefinitionMutator {
           }
           meta.addWorkflowHop(meta.nrWorkflowHops(), hop);
           yield Map.of(
-              "operation", name,
-              "from", from,
-              "to", to,
-              "enabled", hop.isEnabled(),
-              "evaluation", hop.isEvaluation(),
-              "unconditional", hop.isUnconditional());
+              "operation",
+              name,
+              "from",
+              from,
+              "to",
+              to,
+              "enabled",
+              hop.isEnabled(),
+              "evaluation",
+              hop.isEvaluation(),
+              "unconditional",
+              hop.isUnconditional());
         }
         case "remove_hop" -> {
           String from = required(operation, "from");
@@ -609,8 +612,7 @@ final class HopDefinitionMutator {
     throw new IllegalArgumentException(key + " must be a boolean");
   }
 
-  private static boolean optionalBoolean(
-      Map<String, Object> values, String key, boolean fallback) {
+  private static boolean optionalBoolean(Map<String, Object> values, String key, boolean fallback) {
     return values.containsKey(key) ? booleanValue(values, key) : fallback;
   }
 
@@ -653,8 +655,10 @@ final class HopDefinitionMutator {
     private final Path backup;
     private final boolean existed;
     private final String oldHash;
+
     @SuppressWarnings("unused")
     private final String newHash;
+
     private boolean rolledBack;
 
     private MutationRecord(

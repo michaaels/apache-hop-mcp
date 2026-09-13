@@ -38,8 +38,7 @@ class HopDefinitionMutatorTest {
     Variables variables = new Variables();
     MemoryMetadataProvider metadataProvider = new MemoryMetadataProvider();
     ProjectFiles files = new ProjectFiles(project);
-    HopDefinitionMutator mutator =
-        new HopDefinitionMutator(files, variables, metadataProvider);
+    HopDefinitionMutator mutator = new HopDefinitionMutator(files, variables, metadataProvider);
     List<Map<String, Object>> operations =
         List.of(
             Map.of("operation", "set_name", "value", "Generated pipeline"),
@@ -59,9 +58,7 @@ class HopDefinitionMutatorTest {
 
     PipelineMeta pipeline =
         new PipelineMeta(
-            Files.newInputStream(project.resolve("generated.hpl")),
-            metadataProvider,
-            variables);
+            Files.newInputStream(project.resolve("generated.hpl")), metadataProvider, variables);
     assertEquals("Generated pipeline", pipeline.getName());
     assertEquals("Created semantically", pipeline.getDescription());
 
@@ -85,42 +82,33 @@ class HopDefinitionMutatorTest {
     Files.write(project.resolve("flow.hwf"), originalXml);
 
     ProjectFiles files = new ProjectFiles(project);
-    HopDefinitionMutator mutator =
-        new HopDefinitionMutator(files, variables, metadataProvider);
+    HopDefinitionMutator mutator = new HopDefinitionMutator(files, variables, metadataProvider);
     String oldHash = ProjectFiles.sha256(originalXml);
     List<Map<String, Object>> operations =
         List.of(Map.of("operation", "set_name", "value", "Corrected workflow"));
 
     assertThrows(
-        Exception.class,
-        () -> mutator.mutate("flow.hwf", "workflow", operations, "wrong", true));
+        Exception.class, () -> mutator.mutate("flow.hwf", "workflow", operations, "wrong", true));
 
-    Map<String, Object> preview =
-        mutator.mutate("flow.hwf", "workflow", operations, null, false);
+    Map<String, Object> preview = mutator.mutate("flow.hwf", "workflow", operations, null, false);
     assertEquals(false, preview.get("applied"));
     assertEquals(oldHash, ProjectFiles.sha256(Files.readAllBytes(project.resolve("flow.hwf"))));
 
-    Map<String, Object> applied =
-        mutator.mutate("flow.hwf", "workflow", operations, oldHash, true);
+    Map<String, Object> applied = mutator.mutate("flow.hwf", "workflow", operations, oldHash, true);
     assertTrue(Files.isRegularFile(project.resolve(String.valueOf(applied.get("backup")))));
     WorkflowMeta corrected =
         new WorkflowMeta(
-            Files.newInputStream(project.resolve("flow.hwf")),
-            metadataProvider,
-            variables);
+            Files.newInputStream(project.resolve("flow.hwf")), metadataProvider, variables);
     assertEquals("Corrected workflow", corrected.getName());
 
     assertThrows(
         Exception.class,
         () -> mutator.rollback(String.valueOf(applied.get("transaction_id")), oldHash));
     mutator.rollback(
-        String.valueOf(applied.get("transaction_id")),
-        String.valueOf(applied.get("new_sha256")));
+        String.valueOf(applied.get("transaction_id")), String.valueOf(applied.get("new_sha256")));
     WorkflowMeta restored =
         new WorkflowMeta(
-            Files.newInputStream(project.resolve("flow.hwf")),
-            metadataProvider,
-            variables);
+            Files.newInputStream(project.resolve("flow.hwf")), metadataProvider, variables);
     assertEquals("Original workflow", restored.getName());
     assertEquals(oldHash, ProjectFiles.sha256(Files.readAllBytes(project.resolve("flow.hwf"))));
   }
@@ -128,12 +116,10 @@ class HopDefinitionMutatorTest {
   @Test
   void serviceRequiresExplicitOptInForExecutionAndAppliedMutation() throws Exception {
     Files.writeString(project.resolve("flow.hpl"), "<pipeline/>");
-    HopMcpService service =
-        new HopMcpService(new ProjectFiles(project), null, null, false);
+    HopMcpService service = new HopMcpService(new ProjectFiles(project), null, null, false);
     try {
       assertThrows(
-          SecurityException.class,
-          () -> service.execute("flow.hpl", "local", Map.of(), 30));
+          SecurityException.class, () -> service.execute("flow.hpl", "local", Map.of(), 30));
       assertThrows(SecurityException.class, () -> service.logs(null, true, -1, 0));
       assertThrows(
           SecurityException.class,
@@ -161,14 +147,11 @@ class HopDefinitionMutatorTest {
             .toList();
 
     assertThrows(
-        Exception.class,
-        () -> mutator.mutate("../escape.hpl", "pipeline", List.of(), null, false));
+        Exception.class, () -> mutator.mutate("../escape.hpl", "pipeline", List.of(), null, false));
     assertThrows(
-        Exception.class,
-        () -> mutator.mutate("flow.hpl", "workflow", List.of(), null, false));
+        Exception.class, () -> mutator.mutate("flow.hpl", "workflow", List.of(), null, false));
     assertThrows(
-        Exception.class,
-        () -> mutator.mutate("flow.hpl", "pipeline", tooMany, null, false));
+        Exception.class, () -> mutator.mutate("flow.hpl", "pipeline", tooMany, null, false));
   }
 
   @Test
@@ -194,19 +177,14 @@ class HopDefinitionMutatorTest {
               events.add(event);
               return true;
             });
-    String oldHash =
-        ProjectFiles.sha256(Files.readAllBytes(project.resolve("structural.hpl")));
+    String oldHash = ProjectFiles.sha256(Files.readAllBytes(project.resolve("structural.hpl")));
 
     Map<String, Object> applied =
         mutator.mutate(
             "structural.hpl",
             "pipeline",
             List.of(
-                Map.of(
-                    "operation", "move_component",
-                    "component", "Input",
-                    "x", 120,
-                    "y", 240),
+                Map.of("operation", "move_component", "component", "Input", "x", 120, "y", 240),
                 Map.of(
                     "operation", "add_hop",
                     "from", "Input",
@@ -217,9 +195,7 @@ class HopDefinitionMutatorTest {
 
     PipelineMeta changed =
         new PipelineMeta(
-            Files.newInputStream(project.resolve("structural.hpl")),
-            metadataProvider,
-            variables);
+            Files.newInputStream(project.resolve("structural.hpl")), metadataProvider, variables);
     TransformMeta input = changed.findTransform("Input");
     assertEquals(120, input.getLocation().x);
     assertEquals(240, input.getLocation().y);
@@ -246,9 +222,7 @@ class HopDefinitionMutatorTest {
             true);
     PipelineMeta withoutOutput =
         new PipelineMeta(
-            Files.newInputStream(project.resolve("structural.hpl")),
-            metadataProvider,
-            variables);
+            Files.newInputStream(project.resolve("structural.hpl")), metadataProvider, variables);
     assertEquals(1, withoutOutput.nrTransforms());
     assertEquals(0, withoutOutput.nrPipelineHops());
 
@@ -267,8 +241,7 @@ class HopDefinitionMutatorTest {
     assertEquals("Apache Hop Native Semantic MCP", capabilities.get("product"));
     assertEquals(List.of("pipeline", "workflow"), capabilities.get("definition_kinds"));
     assertTrue(((List<?>) capabilities.get("semantic_operations")).size() >= 8);
-    assertEquals(
-        List.of("2.19.0", "2.20.0-SNAPSHOT"), capabilities.get("tested_hop_versions"));
+    assertEquals(List.of("2.19.0", "2.20.0-SNAPSHOT"), capabilities.get("tested_hop_versions"));
     assertEquals(false, capabilities.get("live_ui_available"));
     assertEquals("headless_not_connected", capabilities.get("live_ui_status"));
   }
@@ -291,18 +264,13 @@ class HopDefinitionMutatorTest {
 
     HopDefinitionMutator mutator =
         new HopDefinitionMutator(new ProjectFiles(project), variables, metadataProvider);
-    String oldHash =
-        ProjectFiles.sha256(Files.readAllBytes(project.resolve("structural.hwf")));
+    String oldHash = ProjectFiles.sha256(Files.readAllBytes(project.resolve("structural.hwf")));
     Map<String, Object> applied =
         mutator.mutate(
             "structural.hwf",
             "workflow",
             List.of(
-                Map.of(
-                    "operation", "move_component",
-                    "component", "Start",
-                    "x", 75,
-                    "y", 125),
+                Map.of("operation", "move_component", "component", "Start", "x", 75, "y", 125),
                 Map.of(
                     "operation", "add_hop",
                     "from", "Start",
@@ -314,9 +282,7 @@ class HopDefinitionMutatorTest {
 
     WorkflowMeta changed =
         new WorkflowMeta(
-            Files.newInputStream(project.resolve("structural.hwf")),
-            metadataProvider,
-            variables);
+            Files.newInputStream(project.resolve("structural.hwf")), metadataProvider, variables);
     assertEquals(75, changed.findAction("Start").getLocation().x);
     assertEquals(125, changed.findAction("Start").getLocation().y);
     assertEquals(1, changed.nrWorkflowHops());
@@ -324,13 +290,10 @@ class HopDefinitionMutatorTest {
     assertTrue(changed.getWorkflowHop(0).isUnconditional());
 
     mutator.rollback(
-        String.valueOf(applied.get("transaction_id")),
-        String.valueOf(applied.get("new_sha256")));
+        String.valueOf(applied.get("transaction_id")), String.valueOf(applied.get("new_sha256")));
     WorkflowMeta restored =
         new WorkflowMeta(
-            Files.newInputStream(project.resolve("structural.hwf")),
-            metadataProvider,
-            variables);
+            Files.newInputStream(project.resolve("structural.hwf")), metadataProvider, variables);
     assertEquals(0, restored.nrWorkflowHops());
   }
 }

@@ -5,7 +5,9 @@ First release that can safely run and modify Apache Hop definitions through MCP 
 - Adds synchronous and asynchronous local pipeline/workflow execution, status, cancellation, bounded concurrency, timeouts, and redacted logs.
 - Restricts MCP execution to local Apache Hop engine run configurations; remote engines are rejected.
 - Adds previewable native semantic mutations for names, descriptions, component rename/move/removal, and hop add/remove/enabled state.
-- Exposes `hop_capabilities` as a machine-readable semantic contract and introduces a change-event boundary for future live Desktop/Hop Web adapters.
+- Exposes `hop_capabilities` as a machine-readable semantic contract and adds explicit live synchronization with Hop Desktop.
+- Opens or reloads changed definitions through native Hop UI APIs, closes rolled-back created definitions, and never overwrites tabs with unsaved changes.
+- Uses a bounded project-local event bridge with expiring session heartbeats; Hop Web remains reserved for a separate per-user RAP adapter.
 - Requires SHA-256 preconditions for existing definitions and performs backup, atomic replacement, native reload validation, automatic failure recovery, and explicit session rollback.
 - Keeps execution and applied mutation disabled by default behind separate `--allow-execution` and `--allow-mutation` flags.
 - Keeps Hop Web access read-only (`GET` / `HEAD`) and opt-in.

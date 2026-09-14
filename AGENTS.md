@@ -11,7 +11,7 @@ Maintain a small, secure, native-Java MCP plugin for Apache Hop. The Marketplace
 - Java: 21
 - Apache Hop: 2.19.x (`hop.version=2.19.0` compile baseline)
 - MCP Java SDK: 2.0.1
-- Transport in 0.3: STDIO
+- Transport: STDIO
 - Maven coordinate: `io.github.michaaels:apache-hop-mcp`
 
 ## Architecture
@@ -30,7 +30,7 @@ Do not reintroduce Python or a Java subprocess bridge into the Marketplace runti
 
 ## Non-negotiable security rules
 
-1. 0.3.x is read-only. Do not add execution or mutation tools in a patch release.
+1. Never add execution, mutation, or broader authorization in a patch release.
 2. Never allow project paths to escape the configured root through `..`, absolute-path tricks, or symlinks.
 3. Keep DTDs and XML external entities disabled.
 4. Never print secrets returned from Hop metadata or XML. Extend redaction when new sensitive keys are found.
@@ -54,7 +54,7 @@ mvn -B clean verify
 For packaging changes additionally inspect the ZIP:
 
 ```bash
-unzip -l target/apache-hop-mcp-0.4.0.zip
+unzip -l target/apache-hop-mcp-0.5.0.zip
 ```
 
 It must contain `plugins/misc/apache-hop-mcp/` and must not contain Apache Hop runtime jars.
@@ -66,6 +66,6 @@ It must contain `plugins/misc/apache-hop-mcp/` and must not contain Apache Hop r
 - GitHub Release tag is `v${version}`.
 - Keep Marketplace `minHopVersion` aligned with the tested baseline.
 
-## Scope for future 0.4 mutation work
+## Semantic mutation rules
 
 Native mutation must use Hop semantic objects, not arbitrary XML string replacement. Python/outer transaction logic from older prototypes is not a requirement. A mutation implementation must provide: expected SHA-256, preview, backup, atomic write, native reload validation, and rollback.

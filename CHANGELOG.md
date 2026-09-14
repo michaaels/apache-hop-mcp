@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.5.0 - 2026-09-14
+
+- Added filtered, paginated discovery of native pipeline transforms and workflow actions.
+- Added per-plugin schemas generated from Apache Hop's metadata-injection model.
+- Added transactional `add_component` authoring for pipelines and workflows, composable with hop creation in one mutation.
+- Limited component configuration to bounded scalar properties and excluded secret-looking and collection properties.
+- Added native reload tests for authored pipelines, workflow actions, injected values, hops, and unsafe-property rejection.
+
 ## 0.4.0 - 2026-09-10
 
 - Added opt-in synchronous and asynchronous local pipeline/workflow execution.

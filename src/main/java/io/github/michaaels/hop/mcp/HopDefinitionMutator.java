@@ -37,6 +37,7 @@ final class HopDefinitionMutator {
   private final IVariables variables;
   private final IHopMetadataProvider metadataProvider;
   private final HopSemanticEventSink eventSink;
+  private final HopComponentAuthoring componentAuthoring;
   private final Map<String, MutationRecord> transactions = new LinkedHashMap<>();
 
   HopDefinitionMutator(
@@ -53,6 +54,7 @@ final class HopDefinitionMutator {
     this.variables = variables;
     this.metadataProvider = metadataProvider;
     this.eventSink = eventSink == null ? HopSemanticEventSink.NONE : eventSink;
+    this.componentAuthoring = new HopComponentAuthoring(metadataProvider);
   }
 
   synchronized Map<String, Object> mutate(
@@ -342,7 +344,7 @@ final class HopDefinitionMutator {
   private interface Definition {
     Map<String, Object> summary();
 
-    Map<String, Object> apply(Map<String, Object> operation);
+    Map<String, Object> apply(Map<String, Object> operation) throws Exception;
 
     String xml() throws Exception;
   }
@@ -364,9 +366,32 @@ final class HopDefinitionMutator {
     }
 
     @Override
-    public Map<String, Object> apply(Map<String, Object> operation) {
+    public Map<String, Object> apply(Map<String, Object> operation) throws Exception {
       String name = operationName(operation);
       return switch (name) {
+        case "add_component" -> {
+          String componentName = required(operation, "name");
+          if (meta.findTransform(componentName, null) != null) {
+            throw new IllegalArgumentException("Transform name already exists: " + componentName);
+          }
+          int x = optionalCoordinate(operation, "x", 50);
+          int y = optionalCoordinate(operation, "y", 50);
+          TransformMeta transform =
+              componentAuthoring.createTransform(
+                  required(operation, "plugin_id"),
+                  componentName,
+                  operation.get("properties"),
+                  x,
+                  y);
+          meta.addTransform(transform);
+          yield Map.of(
+              "operation", name,
+              "component", componentName,
+              "plugin_id", transform.getPluginId(),
+              "x", x,
+              "y", y,
+              "property_count", propertyCount(operation.get("properties")));
+        }
         case "set_name" -> {
           String next = required(operation, "value");
           String previous = value(meta.getName());
@@ -468,9 +493,33 @@ final class HopDefinitionMutator {
     }
 
     @Override
-    public Map<String, Object> apply(Map<String, Object> operation) {
+    public Map<String, Object> apply(Map<String, Object> operation) throws Exception {
       String name = operationName(operation);
       return switch (name) {
+        case "add_component" -> {
+          String componentName = required(operation, "name");
+          if (meta.findAction(componentName) != null) {
+            throw new IllegalArgumentException("Action name already exists: " + componentName);
+          }
+          int x = optionalCoordinate(operation, "x", 50);
+          int y = optionalCoordinate(operation, "y", 50);
+          ActionMeta action =
+              componentAuthoring.createAction(
+                  meta,
+                  required(operation, "plugin_id"),
+                  componentName,
+                  operation.get("properties"),
+                  x,
+                  y);
+          meta.addAction(action);
+          yield Map.of(
+              "operation", name,
+              "component", componentName,
+              "plugin_id", action.getAction().getPluginId(),
+              "x", x,
+              "y", y,
+              "property_count", propertyCount(operation.get("properties")));
+        }
         case "set_name" -> {
           String next = required(operation, "value");
           String previous = value(meta.getName());
@@ -632,6 +681,14 @@ final class HopDefinitionMutator {
       throw new IllegalArgumentException(key + " must be between 0 and 1000000");
     }
     return coordinate;
+  }
+
+  private static int optionalCoordinate(Map<String, Object> values, String key, int fallback) {
+    return values.containsKey(key) ? coordinate(values, key) : fallback;
+  }
+
+  private static int propertyCount(Object value) {
+    return value instanceof Map<?, ?> map ? map.size() : 0;
   }
 
   private static Map<String, Object> change(

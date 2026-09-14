@@ -35,7 +35,7 @@ final class HopMcpServer implements AutoCloseable {
         McpServer.sync(transport)
             .jsonMapper(mapper)
             .jsonSchemaValidator(new JacksonJsonSchemaValidatorSupplier().get())
-            .serverInfo("apache-hop-mcp", "0.4.0")
+            .serverInfo("apache-hop-mcp", "0.5.0")
             .capabilities(McpSchema.ServerCapabilities.builder().tools(false).build())
             .instructions(
                 "Apache Hop project analysis with explicitly authorized local execution and native semantic mutation. Mutations use preview, SHA-256 preconditions, backup, atomic replace, native reload validation and rollback.")
@@ -81,6 +81,35 @@ final class HopMcpServer implements AutoCloseable {
                     sDefault(a, "query", null),
                     iDefault(a, "offset", 0),
                     iDefault(a, "limit", 50)));
+    add(
+        "hop_component_types",
+        "List native Hop transforms or workflow actions available for semantic authoring.",
+        schema(
+            Map.of(
+                "kind",
+                enumStr("pipeline", "workflow"),
+                "query",
+                str("Optional case-insensitive text in plugin IDs, name, description or category"),
+                "offset",
+                nonNegativeInteger("Number of matching components to skip"),
+                "limit",
+                integer("Maximum components to return")),
+            List.of("kind")),
+        a ->
+            service.componentTypes(
+                s(a, "kind"),
+                sDefault(a, "query", null),
+                iDefault(a, "offset", 0),
+                iDefault(a, "limit", 50)));
+    add(
+        "hop_component_schema",
+        "Describe safe scalar properties that Hop can inject into a transform or workflow action.",
+        schema(
+            Map.of(
+                "kind", enumStr("pipeline", "workflow"),
+                "plugin_id", str("Native Hop transform/action plugin ID")),
+            List.of("kind", "plugin_id")),
+        a -> service.componentSchema(s(a, "kind"), s(a, "plugin_id")));
     add(
         "hop_catalog",
         "Catalog bounded project files with paths, kinds, sizes and SHA-256 fingerprints, without returning contents.",
@@ -398,6 +427,12 @@ final class HopMcpServer implements AutoCloseable {
                     "operation",
                     enumStr(HopSemanticCapabilities.OPERATION_NAMES.toArray(String[]::new))),
                 Map.entry("value", str("Value for set_name or set_description")),
+                Map.entry("plugin_id", str("Native Hop plugin ID for add_component")),
+                Map.entry("name", str("New transform/action name for add_component")),
+                Map.entry(
+                    "properties",
+                    componentPropertiesSchema(
+                        "Safe scalar properties returned by hop_component_schema")),
                 Map.entry("component", str("Existing transform/action name")),
                 Map.entry("new_name", str("New transform/action name")),
                 Map.entry("from", str("Hop source component")),
@@ -421,6 +456,18 @@ final class HopMcpServer implements AutoCloseable {
 
   private static Map<String, Object> coordinate(String d) {
     return Map.of("type", "integer", "description", d, "minimum", 0, "maximum", 1_000_000);
+  }
+
+  private static Map<String, Object> componentPropertiesSchema(String d) {
+    return Map.of(
+        "type",
+        "object",
+        "description",
+        d,
+        "additionalProperties",
+        Map.of("type", List.of("string", "number", "boolean")),
+        "maxProperties",
+        HopComponentAuthoring.MAX_PROPERTIES);
   }
 
   private static Map<String, Object> headersSchema() {

@@ -296,4 +296,126 @@ class HopDefinitionMutatorTest {
             Files.newInputStream(project.resolve("structural.hwf")), metadataProvider, variables);
     assertEquals(0, restored.nrWorkflowHops());
   }
+
+  @Test
+  void discoversNativeComponentsAndTheirSafeScalarSchema() throws Exception {
+    HopComponentAuthoring authoring = new HopComponentAuthoring(new MemoryMetadataProvider());
+
+    Map<String, Object> pipelineTypes = authoring.types("pipeline", "dummy", 0, 10);
+    assertTrue(((Number) pipelineTypes.get("matched_component_count")).intValue() >= 1);
+    assertTrue(
+        ((List<?>) pipelineTypes.get("components"))
+            .stream()
+                .map(Map.class::cast)
+                .anyMatch(component -> "Dummy".equals(component.get("id"))));
+
+    Map<String, Object> startSchema = authoring.schema("workflow", "SPECIAL");
+    assertEquals(true, startSchema.get("native_injection_supported"));
+    assertEquals(true, startSchema.get("scalar_injection_supported"));
+    assertTrue(
+        ((List<?>) startSchema.get("properties"))
+            .stream()
+                .map(Map.class::cast)
+                .anyMatch(property -> "repeat".equals(property.get("key"))));
+    assertFalse(
+        ((List<?>) startSchema.get("properties"))
+            .stream()
+                .map(Map.class::cast)
+                .anyMatch(
+                    property ->
+                        List.of("name", "type", "pluginId", "plugin_id")
+                            .contains(property.get("key"))));
+  }
+
+  @Test
+  void createsAndConnectsNativePipelineComponentsTransactionally() throws Exception {
+    Variables variables = new Variables();
+    MemoryMetadataProvider metadataProvider = new MemoryMetadataProvider();
+    HopDefinitionMutator mutator =
+        new HopDefinitionMutator(new ProjectFiles(project), variables, metadataProvider);
+
+    Map<String, Object> applied =
+        mutator.mutate(
+            "authored.hpl",
+            "pipeline",
+            List.of(
+                Map.of(
+                    "operation", "add_component",
+                    "plugin_id", "Dummy",
+                    "name", "Input",
+                    "x", 100,
+                    "y", 200),
+                Map.of(
+                    "operation", "add_component",
+                    "plugin_id", "Dummy",
+                    "name", "Output",
+                    "x", 300,
+                    "y", 200),
+                Map.of("operation", "add_hop", "from", "Input", "to", "Output")),
+            null,
+            true);
+
+    PipelineMeta pipeline =
+        new PipelineMeta(
+            Files.newInputStream(project.resolve("authored.hpl")), metadataProvider, variables);
+    assertEquals(2, pipeline.nrTransforms());
+    assertEquals("Dummy", pipeline.findTransform("Input").getPluginId());
+    assertEquals(100, pipeline.findTransform("Input").getLocation().x);
+    assertEquals(1, pipeline.nrPipelineHops());
+    assertEquals(true, applied.get("native_reload_valid"));
+  }
+
+  @Test
+  void createsWorkflowActionWithInjectedScalarAndRejectsUnsafeProperties() throws Exception {
+    Variables variables = new Variables();
+    MemoryMetadataProvider metadataProvider = new MemoryMetadataProvider();
+    HopDefinitionMutator mutator =
+        new HopDefinitionMutator(new ProjectFiles(project), variables, metadataProvider);
+
+    Map<String, Object> applied =
+        mutator.mutate(
+            "authored.hwf",
+            "workflow",
+            List.of(
+                Map.of(
+                    "operation", "add_component",
+                    "plugin_id", "SPECIAL",
+                    "name", "Start",
+                    "properties", Map.of("repeat", true)),
+                Map.of(
+                    "operation", "add_component",
+                    "plugin_id", "DUMMY",
+                    "name", "Finish"),
+                Map.of(
+                    "operation", "add_hop",
+                    "from", "Start",
+                    "to", "Finish",
+                    "unconditional", true)),
+            null,
+            true);
+
+    WorkflowMeta workflow =
+        new WorkflowMeta(
+            Files.newInputStream(project.resolve("authored.hwf")), metadataProvider, variables);
+    assertEquals(2, workflow.nrActions());
+    assertEquals("SPECIAL", workflow.findAction("Start").getAction().getPluginId());
+    assertTrue(workflow.findAction("Start").getAction().getXml().contains("<repeat>Y</repeat>"));
+    assertEquals(1, workflow.nrWorkflowHops());
+    assertEquals(true, applied.get("native_reload_valid"));
+
+    assertThrows(
+        SecurityException.class,
+        () ->
+            mutator.mutate(
+                "unsafe.hpl",
+                "pipeline",
+                List.of(
+                    Map.of(
+                        "operation", "add_component",
+                        "plugin_id", "Dummy",
+                        "name", "Unsafe",
+                        "properties", Map.of("client_secret", "must-not-be-accepted"))),
+                null,
+                false));
+  }
 }

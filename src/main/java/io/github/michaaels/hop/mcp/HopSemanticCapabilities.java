@@ -8,6 +8,7 @@ import java.util.Map;
 final class HopSemanticCapabilities {
   static final List<String> OPERATION_NAMES =
       List.of(
+          "add_component",
           "set_name",
           "set_description",
           "rename_component",
@@ -41,6 +42,8 @@ final class HopSemanticCapabilities {
 
   private static List<Map<String, Object>> operations() {
     return List.of(
+        operation(
+            "add_component", List.of("plugin_id", "name"), List.of("properties", "x", "y"), false),
         operation("set_name", List.of("value"), List.of(), false),
         operation("set_description", List.of("value"), List.of(), false),
         operation("rename_component", List.of("component", "new_name"), List.of(), false),

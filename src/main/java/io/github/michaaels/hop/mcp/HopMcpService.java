@@ -23,6 +23,7 @@ final class HopMcpService implements AutoCloseable {
   private final boolean allowWebApi;
   private final HopWebClient webClient;
   private final HopExecutionManager executionManager;
+  private final HopComponentAuthoring componentAuthoring;
   private final HopDefinitionMutator definitionMutator;
   private final HopSemanticEventSink semanticEventSink;
 
@@ -84,6 +85,7 @@ final class HopMcpService implements AutoCloseable {
     this.allowWebApi = allowWebApi;
     this.webClient = webClient;
     this.executionManager = new HopExecutionManager();
+    this.componentAuthoring = new HopComponentAuthoring(metadataProvider);
     this.semanticEventSink =
         semanticEventSink == null ? HopSemanticEventSink.NONE : semanticEventSink;
     this.definitionMutator =
@@ -92,7 +94,7 @@ final class HopMcpService implements AutoCloseable {
 
   Map<String, Object> config() {
     Map<String, Object> result = new LinkedHashMap<>();
-    result.put("version", "0.4.0");
+    result.put("version", "0.5.0");
     result.put("project_root", files.root().toString());
     result.put("transport", "stdio");
     result.put("read_only", !allowMutation);
@@ -113,6 +115,14 @@ final class HopMcpService implements AutoCloseable {
 
   Map<String, Object> plugins(String type, String query, int offset, int limit) {
     return HopNative.plugins(type, query, offset, limit);
+  }
+
+  Map<String, Object> componentTypes(String kind, String query, int offset, int limit) {
+    return componentAuthoring.types(kind, query, offset, limit);
+  }
+
+  Map<String, Object> componentSchema(String kind, String pluginId) throws Exception {
+    return componentAuthoring.schema(kind, pluginId);
   }
 
   Map<String, Object> catalog(String glob, int offset, int limit) throws Exception {

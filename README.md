@@ -1,12 +1,12 @@
-# Apache Hop MCP 0.4.0
+# Apache Hop MCP 0.5.0
 
 Native semantic Model Context Protocol (MCP) server plugin for **Apache Hop 2.19.x and 2.20.x**.
 
 > This is a community project and is not an official Apache Software Foundation project.
 
-## What changed in 0.4.0
+## What changed in 0.5.0
 
-Version 0.4.0 establishes the **Apache Hop Native Semantic MCP**: opt-in local execution, transactional native mutation, a machine-readable semantic capability contract, and live synchronization with Hop Desktop and Hop Web. Inspection remains enabled by default; execution and writes require separate command-line flags. Python and the v0.2 Java subprocess bridge are not required.
+Version 0.5.0 adds native semantic component authoring to the **Apache Hop Native Semantic MCP**. MCP clients can discover transforms/actions, inspect their safe scalar injection schema, create configured components, connect them with hops, preview the result, and apply it through the existing transactional write path. Inspection remains enabled by default; execution and writes require separate command-line flags.
 
 ```text
 Codex / Claude / Qwen
@@ -43,7 +43,7 @@ Live synchronization is explicit and session-scoped. Hop Web creates a separate 
 
 Project inspection is available by default. Pipeline/workflow execution requires `--allow-execution`, is limited to local engine run configurations, permits at most four concurrent operations, and enforces a timeout of at most 900 seconds. Parameters and returned errors/logs are redacted.
 
-Semantic mutation requires `--allow-mutation` when changes are applied. Previews remain read-only. Existing files require an expected SHA-256 precondition. Applied changes use native Hop semantic objects, create a backup, atomically replace the definition, reload it through Hop, automatically restore the backup on validation failure, and return a session transaction ID for explicit rollback. The semantic contract includes definition metadata, component rename/move/removal, and hop add/remove/state operations.
+Semantic mutation requires `--allow-mutation` when changes are applied. Previews remain read-only. Existing files require an expected SHA-256 precondition. Applied changes use native Hop semantic objects, create a backup, atomically replace the definition, reload it through Hop, automatically restore the backup on validation failure, and return a session transaction ID for explicit rollback. The semantic contract includes component creation through Hop's plugin registry and metadata-injection API, definition metadata, component rename/move/removal, and hop add/remove/state operations. Component authoring accepts bounded scalar properties returned by `hop_component_schema`; secret-looking keys and collection-shaped properties are excluded.
 
 The project root is a hard boundary. Paths are normalized and resolved with real paths so traversal and symlinks cannot escape it. XML parsing disables DTDs and external entities. File reads, scans, results, logs, operations, and traversal depth are bounded. Secret-looking values are redacted.
 
@@ -67,11 +67,11 @@ Until Hop 2.20.0 is published, compatibility can be checked against a locally in
 mvn -B -P hop-2.20 clean verify
 ```
 
-The Marketplace artifact is `target/apache-hop-mcp-0.4.0.zip`, containing:
+The Marketplace artifact is `target/apache-hop-mcp-0.5.0.zip`, containing:
 
 ```text
 plugins/misc/apache-hop-mcp/
-  apache-hop-mcp-0.4.0.jar
+  apache-hop-mcp-0.5.0.jar
   version.xml
   lib/...
 ```
@@ -80,10 +80,10 @@ Apache Hop jars are `provided` and are not bundled.
 
 ## Marketplace installation
 
-After the `v0.4.0` GitHub Release exists, import `marketplace/hop-marketplace-repo.yaml` into Hop Marketplace and install **Apache Hop MCP**, or use:
+After the `v0.5.0` GitHub Release exists, import `marketplace/hop-marketplace-repo.yaml` into Hop Marketplace and install **Apache Hop MCP**, or use:
 
 ```bash
-./hop marketplace install io.github.michaaels:apache-hop-mcp:0.4.0 --repo apache-hop-mcp
+./hop marketplace install io.github.michaaels:apache-hop-mcp:0.5.0 --repo apache-hop-mcp
 ```
 
 Restart Hop after installation. Releases are served directly from GitHub through Hop 2.19's `urlTemplate` and `catalogUrl` support.
@@ -127,6 +127,16 @@ args = ["mcp", "--root", "C:\\Hop\\project", "--allow-execution", "--allow-mutat
 
 Only include the opt-in flags that the MCP client should be authorized to use.
 
+## Semantic authoring flow
+
+1. Call `hop_component_types` with `kind=pipeline` or `kind=workflow` to resolve the native plugin ID.
+2. Call `hop_component_schema` for that ID and use only the returned scalar property keys.
+3. Call `hop_mutate_definition` with `apply=false` and one or more `add_component` operations, followed by any required `add_hop` operations.
+4. Review the preview and apply it with `apply=true`; for an existing definition, also provide its current `expected_sha256`.
+5. Validate or execute the saved definition. Use the returned transaction ID and new SHA-256 if rollback is required.
+
+`add_component` requires `plugin_id` and `name`; `properties`, `x`, and `y` are optional. Component names, plugin identity, secret-looking fields, nested objects, and collection properties cannot be overridden through the property map.
+
 ## MCP tools
 
 | Tool | Purpose |
@@ -135,6 +145,8 @@ Only include the opt-in flags that the MCP client should be authorized to use.
 | `hop_capabilities` | native semantic operations, guarantees, compatibility and live-UI status |
 | `hop_live_ui_status` | active Desktop/Web sessions and mutation delivery acknowledgements |
 | `hop_plugins` | filtered, paginated Apache Hop plugin inventory |
+| `hop_component_types` | discover transforms/actions available for semantic authoring |
+| `hop_component_schema` | inspect safe scalar properties accepted by a component plugin |
 | `hop_catalog` | paginated project file metadata and SHA-256 fingerprints |
 | `hop_list_definitions` | list `.hpl` / `.hwf` definitions |
 | `hop_inspect` | components, hops, SQL tables, references |

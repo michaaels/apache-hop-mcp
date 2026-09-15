@@ -5,11 +5,13 @@ import java.math.BigInteger;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.regex.Pattern;
+import org.apache.hop.core.RowMetaAndData;
 import org.apache.hop.core.injection.bean.BeanInjectionInfo;
 import org.apache.hop.core.injection.bean.BeanInjector;
 import org.apache.hop.core.plugins.ActionPluginType;
@@ -17,6 +19,7 @@ import org.apache.hop.core.plugins.IPlugin;
 import org.apache.hop.core.plugins.IPluginType;
 import org.apache.hop.core.plugins.PluginRegistry;
 import org.apache.hop.core.plugins.TransformPluginType;
+import org.apache.hop.core.row.value.ValueMetaString;
 import org.apache.hop.metadata.api.IHopMetadataProvider;
 import org.apache.hop.pipeline.transform.ITransformMeta;
 import org.apache.hop.pipeline.transform.TransformMeta;
@@ -27,6 +30,9 @@ import org.apache.hop.workflow.action.IAction;
 /** Discovers and creates Hop components using the native plugin and metadata-injection APIs. */
 final class HopComponentAuthoring {
   static final int MAX_PROPERTIES = 50;
+  static final int MAX_PROPERTY_GROUPS = 20;
+  static final int MAX_ROWS_PER_GROUP = 100;
+  static final int MAX_TOTAL_GROUP_CELLS = 1_000;
   static final int MAX_PROPERTY_VALUE_LENGTH = 8_192;
   static final int MAX_COMPONENT_NAME_LENGTH = 200;
   static final int MAX_PLUGIN_ID_LENGTH = 200;
@@ -96,28 +102,42 @@ final class HopComponentAuthoring {
     Kind kind = Kind.parse(requestedKind);
     IPlugin plugin = requirePlugin(kind, pluginId);
     Object component = instantiate(kind, plugin);
-    List<Map<String, Object>> properties = injectableProperties(component);
     boolean nativeInjectionSupported = BeanInjectionInfo.isInjectionSupported(component.getClass());
+    BeanInjectionInfo<?> info = nativeInjectionSupported ? injectionInfo(component) : null;
+    List<Map<String, Object>> properties =
+        info == null ? List.of() : injectableScalarProperties(info);
+    List<Map<String, Object>> propertyGroups =
+        info == null ? List.of() : injectablePropertyGroups(info);
     Map<String, Object> result = new LinkedHashMap<>();
     result.put("kind", kind.value);
     result.put("plugin", pluginRow(plugin));
     result.put("native_injection_supported", nativeInjectionSupported);
     result.put("scalar_injection_supported", !properties.isEmpty());
+    result.put("tabular_injection_supported", !propertyGroups.isEmpty());
     result.put("property_count", properties.size());
     result.put("properties", properties);
+    result.put("property_group_count", propertyGroups.size());
+    result.put("property_groups", propertyGroups);
     result.put("sensitive_properties_excluded", true);
-    result.put("collection_properties_excluded", true);
+    result.put("collection_properties_excluded", false);
+    result.put("nested_collection_properties_excluded", true);
     result.put("structural_properties_excluded", true);
     return result;
   }
 
   TransformMeta createTransform(
-      String pluginId, String componentName, Object rawProperties, int x, int y) throws Exception {
+      String pluginId,
+      String componentName,
+      Object rawProperties,
+      Object rawPropertyGroups,
+      int x,
+      int y)
+      throws Exception {
     Kind kind = Kind.PIPELINE;
     IPlugin plugin = requirePlugin(kind, pluginId);
     ITransformMeta transform = (ITransformMeta) instantiate(kind, plugin);
     transform.setDefault();
-    inject(transform, rawProperties);
+    inject(transform, rawProperties, rawPropertyGroups);
     TransformMeta result =
         new TransformMeta(canonicalId(plugin), validName(componentName), transform);
     result.setLocation(x, y);
@@ -129,6 +149,7 @@ final class HopComponentAuthoring {
       String pluginId,
       String componentName,
       Object rawProperties,
+      Object rawPropertyGroups,
       int x,
       int y)
       throws Exception {
@@ -142,7 +163,7 @@ final class HopComponentAuthoring {
     if (action.isStart() && workflowMeta.findStart() != null) {
       throw new IllegalArgumentException("A workflow can contain only one Start action");
     }
-    inject(action, rawProperties);
+    inject(action, rawProperties, rawPropertyGroups);
     ActionMeta result = new ActionMeta(action);
     result.setLocation(x, y);
     result.setParentWorkflowMeta(workflowMeta);
@@ -170,9 +191,7 @@ final class HopComponentAuthoring {
     return plugin;
   }
 
-  private List<Map<String, Object>> injectableProperties(Object component) {
-    if (!BeanInjectionInfo.isInjectionSupported(component.getClass())) return List.of();
-    BeanInjectionInfo<?> info = injectionInfo(component);
+  private List<Map<String, Object>> injectableScalarProperties(BeanInjectionInfo<?> info) {
     return info.getProperties().values().stream()
         .filter(this::isPublicScalarProperty)
         .sorted(Comparator.comparing(BeanInjectionInfo.Property::getKey))
@@ -180,10 +199,39 @@ final class HopComponentAuthoring {
         .toList();
   }
 
+  private List<Map<String, Object>> injectablePropertyGroups(BeanInjectionInfo<?> info) {
+    List<Map<String, Object>> groups = new ArrayList<>();
+    for (BeanInjectionInfo<?>.Group group : info.getGroups()) {
+      if (group.getKey() == null || group.getKey().isBlank() || isSensitive(group.getKey())) {
+        continue;
+      }
+      List<Map<String, Object>> properties =
+          group.getProperties().stream()
+              .filter(this::isPublicTabularProperty)
+              .sorted(Comparator.comparing(BeanInjectionInfo.Property::getKey))
+              .map(this::propertyRow)
+              .toList();
+      if (properties.isEmpty()) continue;
+      Map<String, Object> row = new LinkedHashMap<>();
+      row.put("key", group.getKey());
+      row.put("description", safe(group.getTranslatedDescription()));
+      row.put("max_rows", MAX_ROWS_PER_GROUP);
+      row.put("properties", properties);
+      groups.add(row);
+    }
+    groups.sort(
+        Comparator.comparing(
+            group -> String.valueOf(group.get("key")), String.CASE_INSENSITIVE_ORDER));
+    return groups;
+  }
+
   @SuppressWarnings({"rawtypes", "unchecked"})
-  private void inject(Object component, Object rawProperties) throws Exception {
+  private void inject(Object component, Object rawProperties, Object rawPropertyGroups)
+      throws Exception {
     Map<String, Object> properties = validatedProperties(rawProperties);
-    if (properties.isEmpty()) return;
+    Map<String, List<Map<String, Object>>> propertyGroups =
+        validatedPropertyGroups(rawPropertyGroups);
+    if (properties.isEmpty() && propertyGroups.isEmpty()) return;
     for (String key : properties.keySet()) {
       if (isSensitive(key))
         throw new SecurityException("Sensitive component properties are not accepted");
@@ -203,7 +251,61 @@ final class HopComponentAuthoring {
       }
       injector.setProperty(component, key, null, String.valueOf(entry.getValue()));
     }
+    injectPropertyGroups(component, info, injector, propertyGroups);
     injector.runPostInjectionProcessing(component);
+  }
+
+  @SuppressWarnings({"rawtypes", "unchecked"})
+  private void injectPropertyGroups(
+      Object component,
+      BeanInjectionInfo info,
+      BeanInjector injector,
+      Map<String, List<Map<String, Object>>> requestedGroups)
+      throws Exception {
+    int totalCells = 0;
+    for (Map.Entry<String, List<Map<String, Object>>> requestedGroup : requestedGroups.entrySet()) {
+      String groupKey = requestedGroup.getKey();
+      List<Map<String, Object>> requestedRows = requestedGroup.getValue();
+      Map<String, BeanInjectionInfo.Property> allowed = new LinkedHashMap<>();
+      for (Object value : info.getProperties().values()) {
+        BeanInjectionInfo.Property property = (BeanInjectionInfo.Property) value;
+        if (groupKey.equals(property.getGroupKey()) && isPublicTabularProperty(property)) {
+          allowed.put(property.getKey(), property);
+        }
+      }
+      if (allowed.isEmpty()) {
+        throw new IllegalArgumentException("Unknown or unsupported property group: " + groupKey);
+      }
+
+      LinkedHashSet<String> requestedKeys = new LinkedHashSet<>();
+      for (Map<String, Object> requestedRow : requestedRows) {
+        for (String key : requestedRow.keySet()) {
+          if (!allowed.containsKey(key)) {
+            throw new IllegalArgumentException(
+                "Unknown or unsupported property in group " + groupKey + ": " + key);
+          }
+          requestedKeys.add(key);
+        }
+      }
+      totalCells += requestedRows.size() * requestedKeys.size();
+      if (totalCells > MAX_TOTAL_GROUP_CELLS) {
+        throw new IllegalArgumentException(
+            "property_groups cannot exceed " + MAX_TOTAL_GROUP_CELLS + " cells");
+      }
+
+      List<RowMetaAndData> rows = new ArrayList<>();
+      for (Map<String, Object> requestedRow : requestedRows) {
+        RowMetaAndData row = new RowMetaAndData();
+        for (String key : requestedKeys) {
+          Object value = requestedRow.get(key);
+          row.addValue(new ValueMetaString(key), value == null ? null : String.valueOf(value));
+        }
+        rows.add(row);
+      }
+      for (String key : requestedKeys) {
+        injector.setProperty(component, key, rows, key);
+      }
+    }
   }
 
   @SuppressWarnings({"rawtypes", "unchecked"})
@@ -216,6 +318,15 @@ final class HopComponentAuthoring {
         && (property.getGroupKey() == null || property.getGroupKey().isBlank())
         && !property.isExcludedFromInjection()
         && !isReserved(property.getKey())
+        && !isSensitive(property.getKey())
+        && isScalar(property.getPropertyClass());
+  }
+
+  private boolean isPublicTabularProperty(BeanInjectionInfo<?>.Property property) {
+    return property.pathArraysCount == 1
+        && property.getGroupKey() != null
+        && !property.getGroupKey().isBlank()
+        && !property.isExcludedFromInjection()
         && !isSensitive(property.getKey())
         && isScalar(property.getPropertyClass());
   }
@@ -244,21 +355,79 @@ final class HopComponentAuthoring {
       throw new IllegalArgumentException("properties cannot exceed " + MAX_PROPERTIES + " entries");
     Map<String, Object> result = new LinkedHashMap<>();
     for (Map.Entry<?, ?> entry : map.entrySet()) {
-      String key = entry.getKey() == null ? "" : String.valueOf(entry.getKey());
-      if (key.isBlank() || key.length() > MAX_PLUGIN_ID_LENGTH)
-        throw new IllegalArgumentException("property names must contain 1 to 200 characters");
-      Object propertyValue = entry.getValue();
-      if (!(propertyValue instanceof String
-          || propertyValue instanceof Number
-          || propertyValue instanceof Boolean)) {
-        throw new IllegalArgumentException("property values must be strings, numbers or booleans");
-      }
-      if (String.valueOf(propertyValue).length() > MAX_PROPERTY_VALUE_LENGTH)
-        throw new IllegalArgumentException(
-            "property values cannot exceed " + MAX_PROPERTY_VALUE_LENGTH + " characters");
-      result.put(key, propertyValue);
+      String key = validatePropertyKey(entry.getKey(), "property names");
+      result.put(key, validatePropertyValue(entry.getValue()));
     }
     return result;
+  }
+
+  private static Map<String, List<Map<String, Object>>> validatedPropertyGroups(Object value) {
+    if (value == null) return Map.of();
+    if (!(value instanceof Map<?, ?> groups)) {
+      throw new IllegalArgumentException("property_groups must be an object");
+    }
+    if (groups.size() > MAX_PROPERTY_GROUPS) {
+      throw new IllegalArgumentException(
+          "property_groups cannot exceed " + MAX_PROPERTY_GROUPS + " entries");
+    }
+    Map<String, List<Map<String, Object>>> result = new LinkedHashMap<>();
+    for (Map.Entry<?, ?> groupEntry : groups.entrySet()) {
+      String groupKey = validatePropertyKey(groupEntry.getKey(), "property group names");
+      if (isSensitive(groupKey)) {
+        throw new SecurityException("Sensitive property groups are not accepted");
+      }
+      if (!(groupEntry.getValue() instanceof List<?> rows)) {
+        throw new IllegalArgumentException("property group " + groupKey + " must be an array");
+      }
+      if (rows.isEmpty() || rows.size() > MAX_ROWS_PER_GROUP) {
+        throw new IllegalArgumentException(
+            "property group "
+                + groupKey
+                + " must contain between 1 and "
+                + MAX_ROWS_PER_GROUP
+                + " rows");
+      }
+      List<Map<String, Object>> validatedRows = new ArrayList<>();
+      for (Object rowValue : rows) {
+        if (!(rowValue instanceof Map<?, ?> row)) {
+          throw new IllegalArgumentException("property group rows must be objects");
+        }
+        if (row.isEmpty() || row.size() > MAX_PROPERTIES) {
+          throw new IllegalArgumentException(
+              "property group rows must contain between 1 and " + MAX_PROPERTIES + " properties");
+        }
+        Map<String, Object> validatedRow = new LinkedHashMap<>();
+        for (Map.Entry<?, ?> entry : row.entrySet()) {
+          String key = validatePropertyKey(entry.getKey(), "property names");
+          if (isSensitive(key)) {
+            throw new SecurityException("Sensitive component properties are not accepted");
+          }
+          validatedRow.put(key, validatePropertyValue(entry.getValue()));
+        }
+        validatedRows.add(validatedRow);
+      }
+      result.put(groupKey, List.copyOf(validatedRows));
+    }
+    return result;
+  }
+
+  private static String validatePropertyKey(Object value, String label) {
+    String key = value == null ? "" : String.valueOf(value);
+    if (key.isBlank() || key.length() > MAX_PLUGIN_ID_LENGTH) {
+      throw new IllegalArgumentException(label + " must contain 1 to 200 characters");
+    }
+    return key;
+  }
+
+  private static Object validatePropertyValue(Object value) {
+    if (!(value instanceof String || value instanceof Number || value instanceof Boolean)) {
+      throw new IllegalArgumentException("property values must be strings, numbers or booleans");
+    }
+    if (String.valueOf(value).length() > MAX_PROPERTY_VALUE_LENGTH) {
+      throw new IllegalArgumentException(
+          "property values cannot exceed " + MAX_PROPERTY_VALUE_LENGTH + " characters");
+    }
+    return value;
   }
 
   private static boolean isScalar(Class<?> type) {

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.0 - 2026-09-14
+
+- Added schema discovery for safe one-level tabular property groups exposed by Apache Hop metadata injection.
+- Added bounded `property_groups` support to transactional `add_component` operations.
+- Added native Injector-field authoring and reload coverage, including security and invalid-schema rejection tests.
+- Kept nested collections, secret-looking fields and unsupported properties outside the semantic mutation surface.
+
 ## 0.5.0 - 2026-09-14
 
 - Added filtered, paginated discovery of native pipeline transforms and workflow actions.

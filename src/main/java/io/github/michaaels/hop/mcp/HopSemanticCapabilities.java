@@ -43,7 +43,10 @@ final class HopSemanticCapabilities {
   private static List<Map<String, Object>> operations() {
     return List.of(
         operation(
-            "add_component", List.of("plugin_id", "name"), List.of("properties", "x", "y"), false),
+            "add_component",
+            List.of("plugin_id", "name"),
+            List.of("properties", "property_groups", "x", "y"),
+            false),
         operation("set_name", List.of("value"), List.of(), false),
         operation("set_description", List.of("value"), List.of(), false),
         operation("rename_component", List.of("component", "new_name"), List.of(), false),

@@ -35,7 +35,7 @@ final class HopMcpServer implements AutoCloseable {
         McpServer.sync(transport)
             .jsonMapper(mapper)
             .jsonSchemaValidator(new JacksonJsonSchemaValidatorSupplier().get())
-            .serverInfo("apache-hop-mcp", "0.5.0")
+            .serverInfo("apache-hop-mcp", "0.6.0")
             .capabilities(McpSchema.ServerCapabilities.builder().tools(false).build())
             .instructions(
                 "Apache Hop project analysis with explicitly authorized local execution and native semantic mutation. Mutations use preview, SHA-256 preconditions, backup, atomic replace, native reload validation and rollback.")
@@ -433,6 +433,7 @@ final class HopMcpServer implements AutoCloseable {
                     "properties",
                     componentPropertiesSchema(
                         "Safe scalar properties returned by hop_component_schema")),
+                Map.entry("property_groups", componentPropertyGroupsSchema()),
                 Map.entry("component", str("Existing transform/action name")),
                 Map.entry("new_name", str("New transform/action name")),
                 Map.entry("from", str("Hop source component")),
@@ -468,6 +469,36 @@ final class HopMcpServer implements AutoCloseable {
         Map.of("type", List.of("string", "number", "boolean")),
         "maxProperties",
         HopComponentAuthoring.MAX_PROPERTIES);
+  }
+
+  private static Map<String, Object> componentPropertyGroupsSchema() {
+    Map<String, Object> row =
+        Map.of(
+            "type",
+            "object",
+            "additionalProperties",
+            Map.of("type", List.of("string", "number", "boolean")),
+            "minProperties",
+            1,
+            "maxProperties",
+            HopComponentAuthoring.MAX_PROPERTIES);
+    return Map.of(
+        "type",
+        "object",
+        "description",
+        "Tabular property groups returned by hop_component_schema",
+        "additionalProperties",
+        Map.of(
+            "type",
+            "array",
+            "minItems",
+            1,
+            "maxItems",
+            HopComponentAuthoring.MAX_ROWS_PER_GROUP,
+            "items",
+            row),
+        "maxProperties",
+        HopComponentAuthoring.MAX_PROPERTY_GROUPS);
   }
 
   private static Map<String, Object> headersSchema() {

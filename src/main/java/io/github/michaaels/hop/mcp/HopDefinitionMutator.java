@@ -381,6 +381,7 @@ final class HopDefinitionMutator {
                   required(operation, "plugin_id"),
                   componentName,
                   operation.get("properties"),
+                  operation.get("property_groups"),
                   x,
                   y);
           meta.addTransform(transform);
@@ -390,7 +391,8 @@ final class HopDefinitionMutator {
               "plugin_id", transform.getPluginId(),
               "x", x,
               "y", y,
-              "property_count", propertyCount(operation.get("properties")));
+              "property_count", propertyCount(operation.get("properties")),
+              "property_group_count", propertyCount(operation.get("property_groups")));
         }
         case "set_name" -> {
           String next = required(operation, "value");
@@ -509,6 +511,7 @@ final class HopDefinitionMutator {
                   required(operation, "plugin_id"),
                   componentName,
                   operation.get("properties"),
+                  operation.get("property_groups"),
                   x,
                   y);
           meta.addAction(action);
@@ -518,7 +521,8 @@ final class HopDefinitionMutator {
               "plugin_id", action.getAction().getPluginId(),
               "x", x,
               "y", y,
-              "property_count", propertyCount(operation.get("properties")));
+              "property_count", propertyCount(operation.get("properties")),
+              "property_group_count", propertyCount(operation.get("property_groups")));
         }
         case "set_name" -> {
           String next = required(operation, "value");

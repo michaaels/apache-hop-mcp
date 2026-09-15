@@ -18,6 +18,7 @@ import org.apache.hop.pipeline.PipelineHopMeta;
 import org.apache.hop.pipeline.PipelineMeta;
 import org.apache.hop.pipeline.transform.TransformMeta;
 import org.apache.hop.pipeline.transforms.dummy.DummyMeta;
+import org.apache.hop.pipeline.transforms.injector.InjectorMeta;
 import org.apache.hop.workflow.WorkflowMeta;
 import org.apache.hop.workflow.action.ActionMeta;
 import org.apache.hop.workflow.actions.dummy.ActionDummy;
@@ -298,7 +299,7 @@ class HopDefinitionMutatorTest {
   }
 
   @Test
-  void discoversNativeComponentsAndTheirSafeScalarSchema() throws Exception {
+  void discoversNativeComponentsAndTheirSafeSemanticSchema() throws Exception {
     HopComponentAuthoring authoring = new HopComponentAuthoring(new MemoryMetadataProvider());
 
     Map<String, Object> pipelineTypes = authoring.types("pipeline", "dummy", 0, 10);
@@ -325,6 +326,150 @@ class HopDefinitionMutatorTest {
                     property ->
                         List.of("name", "type", "pluginId", "plugin_id")
                             .contains(property.get("key"))));
+
+    Map<String, Object> injectorSchema = authoring.schema("pipeline", "Injector");
+    assertEquals(true, injectorSchema.get("tabular_injection_supported"));
+    assertEquals(false, injectorSchema.get("collection_properties_excluded"));
+    Map<?, ?> fieldsGroup =
+        ((List<?>) injectorSchema.get("property_groups"))
+            .stream()
+                .map(Map.class::cast)
+                .filter(group -> "fields".equals(group.get("key")))
+                .findFirst()
+                .orElseThrow();
+    List<?> fieldProperties = (List<?>) fieldsGroup.get("properties");
+    assertTrue(
+        fieldProperties.stream()
+            .map(Map.class::cast)
+            .anyMatch(property -> "name".equals(property.get("key"))));
+    assertTrue(
+        fieldProperties.stream()
+            .map(Map.class::cast)
+            .anyMatch(property -> "type".equals(property.get("key"))));
+  }
+
+  @Test
+  void createsNativeTransformWithTabularInjectedFields() throws Exception {
+    Variables variables = new Variables();
+    MemoryMetadataProvider metadataProvider = new MemoryMetadataProvider();
+    HopDefinitionMutator mutator =
+        new HopDefinitionMutator(new ProjectFiles(project), variables, metadataProvider);
+
+    Map<String, Object> applied =
+        mutator.mutate(
+            "tabular.hpl",
+            "pipeline",
+            List.of(
+                Map.of(
+                    "operation",
+                    "add_component",
+                    "plugin_id",
+                    "Injector",
+                    "name",
+                    "Input",
+                    "property_groups",
+                    Map.of(
+                        "fields",
+                        List.of(
+                            Map.of("name", "id", "type", "Integer", "length", 9, "precision", 0),
+                            Map.of(
+                                "name",
+                                "label",
+                                "type",
+                                "String",
+                                "length",
+                                100,
+                                "precision",
+                                0))))),
+            null,
+            true);
+
+    PipelineMeta pipeline =
+        new PipelineMeta(
+            Files.newInputStream(project.resolve("tabular.hpl")), metadataProvider, variables);
+    InjectorMeta injector = (InjectorMeta) pipeline.findTransform("Input").getTransform();
+    assertEquals(2, injector.getInjectorFields().size());
+    assertEquals("id", injector.getInjectorFields().get(0).getName());
+    assertEquals("Integer", injector.getInjectorFields().get(0).getType());
+    assertEquals("9", injector.getInjectorFields().get(0).getLength());
+    assertEquals("label", injector.getInjectorFields().get(1).getName());
+    assertEquals(
+        1,
+        ((Number)
+                ((Map<?, ?>) ((List<?>) applied.get("changes")).get(0)).get("property_group_count"))
+            .intValue());
+  }
+
+  @Test
+  void rejectsUnsafeOrInvalidTabularProperties() throws Exception {
+    Variables variables = new Variables();
+    HopDefinitionMutator mutator =
+        new HopDefinitionMutator(
+            new ProjectFiles(project), variables, new MemoryMetadataProvider());
+    List<Map<String, Object>> tooManyRows =
+        java.util.stream.IntStream.rangeClosed(0, HopComponentAuthoring.MAX_ROWS_PER_GROUP)
+            .mapToObj(i -> Map.<String, Object>of("name", "field_" + i))
+            .toList();
+
+    assertThrows(
+        SecurityException.class,
+        () ->
+            mutator.mutate(
+                "secret-fields.hpl",
+                "pipeline",
+                List.of(
+                    Map.of(
+                        "operation", "add_component",
+                        "plugin_id", "Injector",
+                        "name", "Input",
+                        "property_groups",
+                            Map.of("fields", List.of(Map.of("client_secret", "hidden"))))),
+                null,
+                false));
+    assertThrows(
+        IllegalArgumentException.class,
+        () ->
+            mutator.mutate(
+                "unknown-fields.hpl",
+                "pipeline",
+                List.of(
+                    Map.of(
+                        "operation", "add_component",
+                        "plugin_id", "Injector",
+                        "name", "Input",
+                        "property_groups",
+                            Map.of("fields", List.of(Map.of("not_a_field", "value"))))),
+                null,
+                false));
+    assertThrows(
+        IllegalArgumentException.class,
+        () ->
+            mutator.mutate(
+                "nested-fields.hpl",
+                "pipeline",
+                List.of(
+                    Map.of(
+                        "operation", "add_component",
+                        "plugin_id", "Injector",
+                        "name", "Input",
+                        "property_groups",
+                            Map.of("fields", List.of(Map.of("name", Map.of("nested", true)))))),
+                null,
+                false));
+    assertThrows(
+        IllegalArgumentException.class,
+        () ->
+            mutator.mutate(
+                "too-many-fields.hpl",
+                "pipeline",
+                List.of(
+                    Map.of(
+                        "operation", "add_component",
+                        "plugin_id", "Injector",
+                        "name", "Input",
+                        "property_groups", Map.of("fields", tooManyRows))),
+                null,
+                false));
   }
 
   @Test

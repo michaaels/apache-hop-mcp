@@ -18,6 +18,7 @@ import org.apache.hop.pipeline.PipelineHopMeta;
 import org.apache.hop.pipeline.PipelineMeta;
 import org.apache.hop.pipeline.transform.TransformMeta;
 import org.apache.hop.pipeline.transforms.dummy.DummyMeta;
+import org.apache.hop.pipeline.transforms.injector.InjectorField;
 import org.apache.hop.pipeline.transforms.injector.InjectorMeta;
 import org.apache.hop.workflow.WorkflowMeta;
 import org.apache.hop.workflow.action.ActionMeta;
@@ -398,6 +399,136 @@ class HopDefinitionMutatorTest {
         ((Number)
                 ((Map<?, ?>) ((List<?>) applied.get("changes")).get(0)).get("property_group_count"))
             .intValue());
+  }
+
+  @Test
+  void replacesExistingTabularFieldsWhilePreservingPipelineStructureAndSupportsRollback()
+      throws Exception {
+    Variables variables = new Variables();
+    MemoryMetadataProvider metadataProvider = new MemoryMetadataProvider();
+    InjectorMeta injectorMeta = new InjectorMeta();
+    injectorMeta.setInjectorFields(
+        List.of(
+            new InjectorField("old_id", "Integer", "9", "0"),
+            new InjectorField("old_label", "String", "50", "0")));
+    PipelineMeta original = new PipelineMeta();
+    original.setFilename(project.resolve("update-tabular.hpl").toString());
+    original.setNameSynchronizedWithFilename(false);
+    original.setName("Update tabular");
+    TransformMeta input = new TransformMeta("Injector", "Input", injectorMeta);
+    input.setLocation(125, 225);
+    TransformMeta output = new TransformMeta("Dummy", "Output", new DummyMeta());
+    original.addTransform(input);
+    original.addTransform(output);
+    original.addPipelineHop(new PipelineHopMeta(input, output));
+    Files.writeString(project.resolve("update-tabular.hpl"), original.getXml(variables));
+
+    HopDefinitionMutator mutator =
+        new HopDefinitionMutator(new ProjectFiles(project), variables, metadataProvider);
+    String oldHash = ProjectFiles.sha256(Files.readAllBytes(project.resolve("update-tabular.hpl")));
+    List<Map<String, Object>> operations =
+        List.of(
+            Map.of(
+                "operation",
+                "update_component",
+                "component",
+                "Input",
+                "property_groups",
+                Map.of(
+                    "fields",
+                    List.of(
+                        Map.of(
+                            "name",
+                            "new_value",
+                            "type",
+                            "Number",
+                            "length",
+                            12,
+                            "precision",
+                            3)))));
+
+    Map<String, Object> preview =
+        mutator.mutate("update-tabular.hpl", "pipeline", operations, oldHash, false);
+    assertEquals(true, preview.get("preview"));
+    assertEquals(
+        oldHash, ProjectFiles.sha256(Files.readAllBytes(project.resolve("update-tabular.hpl"))));
+
+    Map<String, Object> applied =
+        mutator.mutate("update-tabular.hpl", "pipeline", operations, oldHash, true);
+    PipelineMeta changed =
+        new PipelineMeta(
+            Files.newInputStream(project.resolve("update-tabular.hpl")),
+            metadataProvider,
+            variables);
+    TransformMeta changedInput = changed.findTransform("Input");
+    InjectorMeta changedInjector = (InjectorMeta) changedInput.getTransform();
+    assertEquals(1, changedInjector.getInjectorFields().size());
+    assertEquals("new_value", changedInjector.getInjectorFields().get(0).getName());
+    assertEquals("Number", changedInjector.getInjectorFields().get(0).getType());
+    assertEquals(125, changedInput.getLocation().x);
+    assertEquals(225, changedInput.getLocation().y);
+    assertEquals(1, changed.nrPipelineHops());
+    assertEquals("Output", changed.getPipelineHop(0).getToTransform().getName());
+
+    mutator.rollback(
+        String.valueOf(applied.get("transaction_id")), String.valueOf(applied.get("new_sha256")));
+    PipelineMeta restored =
+        new PipelineMeta(
+            Files.newInputStream(project.resolve("update-tabular.hpl")),
+            metadataProvider,
+            variables);
+    assertEquals(
+        2,
+        ((InjectorMeta) restored.findTransform("Input").getTransform()).getInjectorFields().size());
+  }
+
+  @Test
+  void updatesExistingWorkflowScalarProperties() throws Exception {
+    Variables variables = new Variables();
+    MemoryMetadataProvider metadataProvider = new MemoryMetadataProvider();
+    HopDefinitionMutator mutator =
+        new HopDefinitionMutator(new ProjectFiles(project), variables, metadataProvider);
+    Map<String, Object> created =
+        mutator.mutate(
+            "update-scalar.hwf",
+            "workflow",
+            List.of(
+                Map.of(
+                    "operation", "add_component",
+                    "plugin_id", "SPECIAL",
+                    "name", "Start",
+                    "properties", Map.of("repeat", false))),
+            null,
+            true);
+
+    Map<String, Object> updated =
+        mutator.mutate(
+            "update-scalar.hwf",
+            "workflow",
+            List.of(
+                Map.of(
+                    "operation", "update_component",
+                    "component", "Start",
+                    "properties", Map.of("repeat", true))),
+            String.valueOf(created.get("new_sha256")),
+            true);
+
+    WorkflowMeta workflow =
+        new WorkflowMeta(
+            Files.newInputStream(project.resolve("update-scalar.hwf")),
+            metadataProvider,
+            variables);
+    assertTrue(workflow.findAction("Start").getAction().getXml().contains("<repeat>Y</repeat>"));
+    assertEquals(true, updated.get("native_reload_valid"));
+    assertThrows(
+        IllegalArgumentException.class,
+        () ->
+            mutator.mutate(
+                "update-scalar.hwf",
+                "workflow",
+                List.of(Map.of("operation", "update_component", "component", "Start")),
+                String.valueOf(updated.get("new_sha256")),
+                false));
   }
 
   @Test

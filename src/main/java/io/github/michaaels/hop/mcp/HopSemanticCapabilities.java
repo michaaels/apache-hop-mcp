@@ -9,6 +9,7 @@ final class HopSemanticCapabilities {
   static final List<String> OPERATION_NAMES =
       List.of(
           "add_component",
+          "update_component",
           "set_name",
           "set_description",
           "rename_component",
@@ -46,6 +47,11 @@ final class HopSemanticCapabilities {
             "add_component",
             List.of("plugin_id", "name"),
             List.of("properties", "property_groups", "x", "y"),
+            false),
+        operation(
+            "update_component",
+            List.of("component"),
+            List.of("properties", "property_groups"),
             false),
         operation("set_name", List.of("value"), List.of(), false),
         operation("set_description", List.of("value"), List.of(), false),

@@ -394,6 +394,21 @@ final class HopDefinitionMutator {
               "property_count", propertyCount(operation.get("properties")),
               "property_group_count", propertyCount(operation.get("property_groups")));
         }
+        case "update_component" -> {
+          String componentName = required(operation, "component");
+          requireComponentUpdates(operation);
+          TransformMeta transform = requireTransform(meta, componentName);
+          componentAuthoring.updateComponent(
+              transform.getTransform(),
+              operation.get("properties"),
+              operation.get("property_groups"));
+          yield Map.of(
+              "operation", name,
+              "component", componentName,
+              "plugin_id", transform.getPluginId(),
+              "property_count", propertyCount(operation.get("properties")),
+              "property_group_count", propertyCount(operation.get("property_groups")));
+        }
         case "set_name" -> {
           String next = required(operation, "value");
           String previous = value(meta.getName());
@@ -521,6 +536,19 @@ final class HopDefinitionMutator {
               "plugin_id", action.getAction().getPluginId(),
               "x", x,
               "y", y,
+              "property_count", propertyCount(operation.get("properties")),
+              "property_group_count", propertyCount(operation.get("property_groups")));
+        }
+        case "update_component" -> {
+          String componentName = required(operation, "component");
+          requireComponentUpdates(operation);
+          ActionMeta action = requireAction(meta, componentName);
+          componentAuthoring.updateComponent(
+              action.getAction(), operation.get("properties"), operation.get("property_groups"));
+          yield Map.of(
+              "operation", name,
+              "component", componentName,
+              "plugin_id", action.getAction().getPluginId(),
               "property_count", propertyCount(operation.get("properties")),
               "property_group_count", propertyCount(operation.get("property_groups")));
         }
@@ -693,6 +721,13 @@ final class HopDefinitionMutator {
 
   private static int propertyCount(Object value) {
     return value instanceof Map<?, ?> map ? map.size() : 0;
+  }
+
+  private static void requireComponentUpdates(Map<String, Object> operation) {
+    if (propertyCount(operation.get("properties")) == 0
+        && propertyCount(operation.get("property_groups")) == 0) {
+      throw new IllegalArgumentException("update_component requires properties or property_groups");
+    }
   }
 
   private static Map<String, Object> change(

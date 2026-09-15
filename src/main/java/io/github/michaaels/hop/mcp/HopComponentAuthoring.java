@@ -1,5 +1,6 @@
 package io.github.michaaels.hop.mcp;
 
+import java.lang.reflect.Array;
 import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.util.ArrayList;
@@ -14,6 +15,7 @@ import java.util.regex.Pattern;
 import org.apache.hop.core.RowMetaAndData;
 import org.apache.hop.core.injection.bean.BeanInjectionInfo;
 import org.apache.hop.core.injection.bean.BeanInjector;
+import org.apache.hop.core.injection.bean.BeanLevelInfo;
 import org.apache.hop.core.plugins.ActionPluginType;
 import org.apache.hop.core.plugins.IPlugin;
 import org.apache.hop.core.plugins.IPluginType;
@@ -137,7 +139,7 @@ final class HopComponentAuthoring {
     IPlugin plugin = requirePlugin(kind, pluginId);
     ITransformMeta transform = (ITransformMeta) instantiate(kind, plugin);
     transform.setDefault();
-    inject(transform, rawProperties, rawPropertyGroups);
+    inject(transform, rawProperties, rawPropertyGroups, false);
     TransformMeta result =
         new TransformMeta(canonicalId(plugin), validName(componentName), transform);
     result.setLocation(x, y);
@@ -163,11 +165,17 @@ final class HopComponentAuthoring {
     if (action.isStart() && workflowMeta.findStart() != null) {
       throw new IllegalArgumentException("A workflow can contain only one Start action");
     }
-    inject(action, rawProperties, rawPropertyGroups);
+    inject(action, rawProperties, rawPropertyGroups, false);
     ActionMeta result = new ActionMeta(action);
     result.setLocation(x, y);
     result.setParentWorkflowMeta(workflowMeta);
     return result;
+  }
+
+  void updateComponent(Object component, Object rawProperties, Object rawPropertyGroups)
+      throws Exception {
+    if (component == null) throw new IllegalArgumentException("component is required");
+    inject(component, rawProperties, rawPropertyGroups, true);
   }
 
   private Object instantiate(Kind kind, IPlugin plugin) throws Exception {
@@ -226,7 +234,11 @@ final class HopComponentAuthoring {
   }
 
   @SuppressWarnings({"rawtypes", "unchecked"})
-  private void inject(Object component, Object rawProperties, Object rawPropertyGroups)
+  private void inject(
+      Object component,
+      Object rawProperties,
+      Object rawPropertyGroups,
+      boolean replacePropertyGroups)
       throws Exception {
     Map<String, Object> properties = validatedProperties(rawProperties);
     Map<String, List<Map<String, Object>>> propertyGroups =
@@ -251,8 +263,60 @@ final class HopComponentAuthoring {
       }
       injector.setProperty(component, key, null, String.valueOf(entry.getValue()));
     }
+    if (replacePropertyGroups) {
+      resetPropertyGroups(component, info, propertyGroups.keySet());
+    }
     injectPropertyGroups(component, info, injector, propertyGroups);
     injector.runPostInjectionProcessing(component);
+  }
+
+  @SuppressWarnings("rawtypes")
+  private void resetPropertyGroups(
+      Object component, BeanInjectionInfo info, Set<String> requestedGroupKeys) throws Exception {
+    for (String groupKey : requestedGroupKeys) {
+      List<BeanInjectionInfo.Property> properties = new ArrayList<>();
+      for (Object value : info.getProperties().values()) {
+        BeanInjectionInfo.Property property = (BeanInjectionInfo.Property) value;
+        if (groupKey.equals(property.getGroupKey()) && isPublicTabularProperty(property)) {
+          properties.add(property);
+        }
+      }
+      if (properties.isEmpty()) {
+        throw new IllegalArgumentException("Unknown or unsupported property group: " + groupKey);
+      }
+      for (BeanInjectionInfo.Property property : properties) {
+        resetCollection(component, property);
+      }
+    }
+  }
+
+  @SuppressWarnings({"rawtypes", "unchecked"})
+  private static void resetCollection(Object component, BeanInjectionInfo.Property property)
+      throws Exception {
+    Object owner = component;
+    List<BeanLevelInfo> path = property.getPath();
+    for (int i = 1; i < path.size(); i++) {
+      BeanLevelInfo level = path.get(i);
+      if (level.dim == BeanLevelInfo.DIMENSION.LIST) {
+        Object value = level.field != null ? level.field.get(owner) : level.getter.invoke(owner);
+        if (value instanceof List<?> list) list.clear();
+        return;
+      }
+      if (level.dim == BeanLevelInfo.DIMENSION.ARRAY) {
+        if (level.field == null) {
+          throw new IllegalArgumentException(
+              "Unsupported array-backed property group: " + property.getGroupKey());
+        }
+        level.field.set(owner, Array.newInstance(level.leafClass, 0));
+        return;
+      }
+      if (i < path.size() - 1) {
+        owner = level.field != null ? level.field.get(owner) : level.getter.invoke(owner);
+        if (owner == null) return;
+      }
+    }
+    throw new IllegalArgumentException(
+        "Property group does not expose a replaceable collection: " + property.getGroupKey());
   }
 
   @SuppressWarnings({"rawtypes", "unchecked"})

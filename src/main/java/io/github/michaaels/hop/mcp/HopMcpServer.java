@@ -35,7 +35,7 @@ final class HopMcpServer implements AutoCloseable {
         McpServer.sync(transport)
             .jsonMapper(mapper)
             .jsonSchemaValidator(new JacksonJsonSchemaValidatorSupplier().get())
-            .serverInfo("apache-hop-mcp", "0.6.0")
+            .serverInfo("apache-hop-mcp", "0.7.0")
             .capabilities(McpSchema.ServerCapabilities.builder().tools(false).build())
             .instructions(
                 "Apache Hop project analysis with explicitly authorized local execution and native semantic mutation. Mutations use preview, SHA-256 preconditions, backup, atomic replace, native reload validation and rollback.")

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.7.0 - 2026-09-14
+
+- Added transactional `update_component` support for existing pipeline transforms and workflow actions.
+- Added scalar property updates and replacement semantics for requested one-level tabular groups.
+- Preserved component identity, canvas position, hops and unspecified configuration during updates.
+- Added preview, apply, native reload and rollback coverage for scalar and tabular updates.
+
 ## 0.6.0 - 2026-09-14
 
 - Added schema discovery for safe one-level tabular property groups exposed by Apache Hop metadata injection.

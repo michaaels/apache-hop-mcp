@@ -94,7 +94,7 @@ final class HopMcpService implements AutoCloseable {
 
   Map<String, Object> config() {
     Map<String, Object> result = new LinkedHashMap<>();
-    result.put("version", "0.6.0");
+    result.put("version", "0.7.0");
     result.put("project_root", files.root().toString());
     result.put("transport", "stdio");
     result.put("read_only", !allowMutation);

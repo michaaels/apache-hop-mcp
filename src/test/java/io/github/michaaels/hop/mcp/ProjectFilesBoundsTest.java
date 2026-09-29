@@ -58,6 +58,21 @@ class ProjectFilesBoundsTest {
   }
 
   @Test
+  void missingRootProducesAnIncompleteScanAndPages() throws Exception {
+    Path root = Files.createDirectory(temp.resolve("disappearing"));
+    ProjectFiles files = new ProjectFiles(root);
+    Files.delete(root);
+
+    BoundedProjectWalker.ScanResult scan = BoundedProjectWalker.scan(root, null, path -> true, 10);
+    assertTrue(scan.files().isEmpty());
+    assertTrue(scan.scanLimitReached());
+    assertEquals(1, scan.visitedEntries());
+    assertEquals(false, files.definitionsPage(0, 10).get("count_complete"));
+    assertEquals(false, files.catalog("**", 0, 10).get("count_complete"));
+    assertEquals(false, files.search("needle", "**", 0, 10).get("count_complete"));
+  }
+
+  @Test
   void walkerStopsAtVisitedFileAndDepthLimits() throws Exception {
     Path visitedRoot = Files.createDirectory(temp.resolve("visited"));
     write(visitedRoot, "a.txt", "a");

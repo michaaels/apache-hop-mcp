@@ -7,4 +7,6 @@ target/
 *.log
 .env
 outputs/
+__pycache__/
+*.pyc
 examples/**/output/

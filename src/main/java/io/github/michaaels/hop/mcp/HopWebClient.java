@@ -2,11 +2,12 @@ package io.github.michaaels.hop.mcp;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
-import java.io.InputStream;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.net.http.HttpTimeoutException;
+import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.Base64;
@@ -15,6 +16,12 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionStage;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Flow;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 /** A bounded, read-only client for a configured Apache Hop Web base URL. */
 final class HopWebClient {
@@ -86,24 +93,43 @@ final class HopWebClient {
     }
     addAuthentication(builder);
 
-    HttpResponse<InputStream> response =
-        client.send(builder.build(), HttpResponse.BodyHandlers.ofInputStream());
-    try (InputStream responseStream = response.body()) {
-      ReadResult body = readResponse(responseStream);
-      Map<String, Object> output = new LinkedHashMap<>();
-      output.put("method", requestMethod);
-      output.put("url", publicUrl(uri));
-      output.put("query_present", uri.getRawQuery() != null);
-      output.put("status", response.statusCode());
-      output.put("ok", response.statusCode() >= 200 && response.statusCode() < 300);
-      output.put("headers", responseHeaders(response.headers().map()));
-      BoundedText returnedBody =
-          truncateUtf8(SensitiveData.redactSensitiveText(body.text()), MAX_WEB_BODY_RETURN_BYTES);
-      output.put("body", returnedBody.text());
-      output.put("body_bytes", body.bytes());
-      output.put("returned_bytes", returnedBody.bytes());
-      output.put("body_truncated", body.truncated() || returnedBody.truncated());
-      return output;
+    HttpResponse<ReadResult> response = sendBounded(builder.build());
+    ReadResult body = response.body();
+    Map<String, Object> output = new LinkedHashMap<>();
+    output.put("method", requestMethod);
+    output.put("url", publicUrl(uri));
+    output.put("query_present", uri.getRawQuery() != null);
+    output.put("status", response.statusCode());
+    output.put("ok", response.statusCode() >= 200 && response.statusCode() < 300);
+    output.put("headers", responseHeaders(response.headers().map()));
+    BoundedText returnedBody =
+        truncateUtf8(SensitiveData.redactSensitiveText(body.text()), MAX_WEB_BODY_RETURN_BYTES);
+    output.put("body", returnedBody.text());
+    output.put("body_bytes", body.bytes());
+    output.put("returned_bytes", returnedBody.bytes());
+    output.put("body_truncated", body.truncated() || returnedBody.truncated());
+    return output;
+  }
+
+  private HttpResponse<ReadResult> sendBounded(HttpRequest request)
+      throws IOException, InterruptedException {
+    BoundedBodySubscriber body = new BoundedBodySubscriber();
+    long started = System.nanoTime();
+    CompletableFuture<HttpResponse<ReadResult>> response = client.sendAsync(request, info -> body);
+    try {
+      long remaining = timeout.toNanos() - (System.nanoTime() - started);
+      if (remaining <= 0) throw new TimeoutException();
+      return response.get(remaining, TimeUnit.NANOSECONDS);
+    } catch (TimeoutException expired) {
+      throw new HttpTimeoutException("Hop Web response exceeded the configured timeout");
+    } catch (ExecutionException failed) {
+      Throwable cause = failed.getCause();
+      if (cause instanceof IOException exception) throw exception;
+      if (cause instanceof RuntimeException exception) throw exception;
+      throw new IOException("Hop Web request failed", cause);
+    } finally {
+      body.cancel();
+      response.cancel(true);
     }
   }
 
@@ -286,21 +312,73 @@ final class HopWebClient {
     return SENSITIVE_RESPONSE_HEADERS.contains(lower) || SensitiveData.isSensitiveKey(lower);
   }
 
-  private static ReadResult readResponse(InputStream input) throws IOException {
-    ByteArrayOutputStream output = new ByteArrayOutputStream();
-    byte[] buffer = new byte[8192];
-    int total = 0;
-    while (total < MAX_RESPONSE_READ_BYTES) {
-      int count = input.read(buffer, 0, Math.min(buffer.length, MAX_RESPONSE_READ_BYTES - total));
-      if (count < 0) {
-        return new ReadResult(output.toString(StandardCharsets.UTF_8), total, false);
-      }
-      output.write(buffer, 0, count);
-      total += count;
+  /** Completes only at EOF or the byte bound, so the request deadline covers body reception. */
+  private static final class BoundedBodySubscriber
+      implements HttpResponse.BodySubscriber<ReadResult> {
+    private final CompletableFuture<ReadResult> body = new CompletableFuture<>();
+    private final ByteArrayOutputStream output = new ByteArrayOutputStream();
+    private final byte[] buffer = new byte[8192];
+    private Flow.Subscription subscription;
+    private boolean cancelled;
+
+    @Override
+    public CompletionStage<ReadResult> getBody() {
+      return body;
     }
-    // Stop at the network bound; a response ending exactly there is conservatively marked
-    // truncated.
-    return new ReadResult(output.toString(StandardCharsets.UTF_8), total, true);
+
+    @Override
+    public synchronized void onSubscribe(Flow.Subscription incoming) {
+      if (cancelled || subscription != null) {
+        incoming.cancel();
+        return;
+      }
+      subscription = incoming;
+      incoming.request(1);
+    }
+
+    @Override
+    public synchronized void onNext(List<ByteBuffer> buffers) {
+      if (cancelled || body.isDone()) return;
+      for (ByteBuffer bytes : buffers) {
+        while (bytes.hasRemaining() && output.size() < MAX_RESPONSE_READ_BYTES) {
+          int count =
+              Math.min(
+                  buffer.length,
+                  Math.min(bytes.remaining(), MAX_RESPONSE_READ_BYTES - output.size()));
+          bytes.get(buffer, 0, count);
+          output.write(buffer, 0, count);
+        }
+        if (output.size() == MAX_RESPONSE_READ_BYTES) {
+          // Exact-bound responses remain conservatively marked truncated, without an extra read.
+          complete(true);
+          cancel();
+          return;
+        }
+      }
+      subscription.request(1);
+    }
+
+    @Override
+    public synchronized void onError(Throwable failure) {
+      body.completeExceptionally(failure);
+    }
+
+    @Override
+    public synchronized void onComplete() {
+      complete(false);
+    }
+
+    private void complete(boolean truncated) {
+      if (body.isDone()) return;
+      body.complete(
+          new ReadResult(output.toString(StandardCharsets.UTF_8), output.size(), truncated));
+    }
+
+    synchronized void cancel() {
+      cancelled = true;
+      if (subscription != null) subscription.cancel();
+      body.cancel(false);
+    }
   }
 
   private static BoundedText truncateUtf8(String text, int maxBytes) {

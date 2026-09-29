@@ -19,7 +19,6 @@ import org.apache.hop.metadata.api.HopMetadataProperty;
 import org.apache.hop.metadata.api.HopMetadataPropertyType;
 import org.apache.hop.metadata.api.IHopMetadata;
 import org.apache.hop.metadata.api.IHopMetadataProvider;
-import org.apache.hop.pipeline.PipelineMeta;
 import org.apache.hop.pipeline.transform.ITransformMeta;
 import org.apache.hop.pipeline.transform.TransformMeta;
 import org.apache.hop.workflow.WorkflowMeta;
@@ -59,8 +58,15 @@ final class HopMetadataReferenceExtractor {
     if (metadataProvider != null) {
       try {
         if (path.toLowerCase(Locale.ROOT).endsWith(".hpl")) {
-          PipelineMeta pipeline = new PipelineMeta(document.getDocumentElement(), metadataProvider);
-          for (TransformMeta transform : pipeline.getTransforms()) {
+          List<TransformMeta> transforms = new ArrayList<>();
+          NodeList children = document.getDocumentElement().getChildNodes();
+          for (int index = 0; index < children.getLength(); index++) {
+            Node child = children.item(index);
+            if (child instanceof Element element && "transform".equals(element.getTagName())) {
+              transforms.add(new TransformMeta(element, metadataProvider));
+            }
+          }
+          for (TransformMeta transform : transforms) {
             String component = safeComponent(transform.getName());
             ITransformMeta meta = transform.getTransform();
             if (meta == null) continue;

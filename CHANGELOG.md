@@ -1,5 +1,17 @@
 # Changelog
 
+## 2.2.3 - 2026-09-29
+
+- Reduced initial native extraction work and repeated scan ordering costs without changing typed references, immutable snapshots, invalidation or filesystem change detection. Full-Hop fixture medians improved from 4,236.7 to 3,754.0 ms for first impact queries and from 125.5 to 19.5 ms for hot queries; startup improvement is not claimed.
+- Fixed execution output schemas to preserve the `-1` unavailable-error-count sentinel at timeout, including nested asynchronous results, while rejecting lower values.
+- Added distribution-only native-reference equivalence and MCP operational acceptance gates (semantic authoring, real row metrics, workflow execution, active cancellation, timeout, SHA-256 preconditions and protected rollback). CI now requires Linux symlink tests to execute without skips.
+- Flushed idle SSE GET headers in the test-only conformance adapter, with a bounded regression test. Added a raw-result CI guard so the official runner cannot silently excuse unlisted failures; declared only its missing JSON Schema fixture tool as an additional known application-profile gap.
+- Enforced a separate definition-index read budget even when XML parsing fails; failed readers reserve their maximum possible consumption without charging unchanged cached entries.
+- Marked filesystem traversal failures as incomplete scans, preserving bounded partial results and existing pagination signals.
+- Applied the Hop Web timeout to headers and bounded body reception, with explicit cancellation on timeout or interruption and no blocking body-reader worker.
+- Added regression coverage for malformed definitions, failed reads and retries, missing project roots, stalled HTTP bodies, inherited metadata properties, variable references, reference limits, and native-source precedence.
+- Added reusable full-Hop benchmark scripts under `scripts/ci`, with Java/Hop/plugin/version checks, alternating fresh processes, cross-version result hashes, and output outside Maven's clean directory.
+
 ## 2.2.2 - 2026-09-25
 
 - Hardened the shared project-definition index with filesystem attribute reuse, file-key-aware stamps, single-flight refresh, generation-aware mutation invalidation, immutable snapshots, and refresh metrics.

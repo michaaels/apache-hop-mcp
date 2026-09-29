@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.IntStream;
 import org.apache.hop.metadata.api.HopMetadata;
 import org.apache.hop.metadata.api.HopMetadataBase;
 import org.apache.hop.metadata.api.HopMetadataProperty;
@@ -16,6 +17,65 @@ import org.apache.hop.metadata.serializer.memory.MemoryMetadataProvider;
 import org.junit.jupiter.api.Test;
 
 class HopMetadataReferenceExtractorTest {
+  @Test
+  void inheritedFieldsAndAnnotatedGettersKeepTypedVariableReferences() {
+    Map<HopMetadataReferenceExtractor.ReferenceKey, HopProjectDefinitionIndex.MetadataReference>
+        references = new LinkedHashMap<>();
+    boolean[] truncated = new boolean[1];
+    HopMetadataReferenceExtractor.addAnnotatedProperties(
+        new InheritedConnection(),
+        "Input",
+        Map.of(HopMetadataPropertyType.RDBMS_CONNECTION, List.of("rdbms")),
+        references,
+        truncated);
+
+    assertFalse(truncated[0]);
+    assertEquals(
+        List.of("SECONDARY", "${DATABASE_CONNECTION}"),
+        references.values().stream()
+            .map(HopProjectDefinitionIndex.MetadataReference::name)
+            .toList());
+    assertTrue(
+        references.values().stream()
+            .allMatch(
+                ref ->
+                    ref.type().equals("rdbms")
+                        && ref.source()
+                            == HopProjectDefinitionIndex.ReferenceSource.METADATA_PROPERTY));
+  }
+
+  @Test
+  void nativeReferenceLimitIsStableAndNativeSourceWinsOverFallback() {
+    Map<HopMetadataReferenceExtractor.ReferenceKey, HopProjectDefinitionIndex.MetadataReference>
+        references = new LinkedHashMap<>();
+    boolean[] truncated = new boolean[1];
+    List<String> names = IntStream.range(0, 201).mapToObj(i -> "DB_" + i).toList();
+    for (int start = 0; start < names.size(); start += 100) {
+      HopMetadataReferenceExtractor.addNative(
+          Map.of(RdbmsMetadata.class, names.subList(start, Math.min(start + 100, names.size()))),
+          "Input",
+          references,
+          truncated);
+    }
+
+    assertTrue(truncated[0]);
+    assertEquals(200, references.size());
+    assertEquals(
+        names.subList(0, 200),
+        references.values().stream()
+            .map(HopProjectDefinitionIndex.MetadataReference::name)
+            .toList());
+    HopMetadataReferenceExtractor.addAnnotatedProperties(
+        new AnnotatedConnection("DB_0"),
+        "Input",
+        Map.of(HopMetadataPropertyType.RDBMS_CONNECTION, List.of("rdbms")),
+        references,
+        truncated);
+    assertEquals(
+        HopProjectDefinitionIndex.ReferenceSource.NATIVE,
+        references.values().iterator().next().source());
+  }
+
   @Test
   void readsAnnotatedMetadataPropertiesAsTypedReferences() {
     Map<HopMetadataReferenceExtractor.ReferenceKey, HopProjectDefinitionIndex.MetadataReference>
@@ -111,12 +171,23 @@ class HopMetadataReferenceExtractorTest {
             .anyMatch(ref -> ref.name().equalsIgnoreCase("DWH_PROD")));
   }
 
-  private static final class AnnotatedConnection {
+  private static class AnnotatedConnection {
     @HopMetadataProperty(hopMetadataPropertyType = HopMetadataPropertyType.RDBMS_CONNECTION)
     private final String connection;
 
     private AnnotatedConnection(String connection) {
       this.connection = connection;
+    }
+  }
+
+  private static final class InheritedConnection extends AnnotatedConnection {
+    private InheritedConnection() {
+      super("${DATABASE_CONNECTION}");
+    }
+
+    @HopMetadataProperty(hopMetadataPropertyType = HopMetadataPropertyType.RDBMS_CONNECTION)
+    private String secondaryConnection() {
+      return "SECONDARY";
     }
   }
 

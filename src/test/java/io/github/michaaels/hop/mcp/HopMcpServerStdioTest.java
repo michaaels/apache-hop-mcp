@@ -467,6 +467,34 @@ class HopMcpServerStdioTest {
         assertTrue(execution.contains("\\\"ok\\\":true"), execution);
         assertTrue(execution.contains("\\\"timed_out\\\":false"), execution);
 
+        // Timeout results retain the native unknown-count sentinel, not a fabricated zero.
+        Map<String, Object> timeoutContent =
+            new java.util.LinkedHashMap<>(
+                objectValue(
+                    objectValue(parseObject(execution).get("result")).get("structuredContent")));
+        timeoutContent.put("ok", false);
+        timeoutContent.put("timed_out", true);
+        timeoutContent.put("status", "timeout");
+        timeoutContent.put("error_count", -1);
+        assertTrue(
+            OUTPUT_VALIDATOR.validate(outputSchemas.get("hop_execute"), timeoutContent).valid());
+        Map<String, Object> nestedTimeout =
+            Map.of(
+                "operation_id", "00000000-0000-0000-0000-000000000000",
+                "path", "valid.hpl",
+                "run_configuration", "local",
+                "state", "timed_out",
+                "started_at", 0,
+                "active_executions", 0,
+                "result", timeoutContent);
+        assertTrue(
+            OUTPUT_VALIDATOR
+                .validate(outputSchemas.get("hop_execution_status"), nestedTimeout)
+                .valid());
+        timeoutContent.put("error_count", -2);
+        assertFalse(
+            OUTPUT_VALIDATOR.validate(outputSchemas.get("hop_execute"), timeoutContent).valid());
+
         requests.println(
             toolCall(18, "hop_start_execution", "{\"path\":\"valid.hpl\",\"timeout_seconds\":10}"));
         String startedExecution = readResponse(reader, responses);

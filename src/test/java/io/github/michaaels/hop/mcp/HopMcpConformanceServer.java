@@ -4,6 +4,8 @@ import io.modelcontextprotocol.json.jackson3.JacksonMcpJsonMapperSupplier;
 import io.modelcontextprotocol.server.McpServer;
 import io.modelcontextprotocol.server.transport.DefaultServerTransportSecurityValidator;
 import io.modelcontextprotocol.server.transport.HttpServletStreamableServerTransportProvider;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -15,6 +17,8 @@ import org.apache.catalina.startup.Tomcat;
 import org.apache.hop.core.HopEnvironment;
 import org.apache.hop.core.variables.Variables;
 import org.apache.hop.metadata.serializer.memory.MemoryMetadataProvider;
+import org.apache.tomcat.util.descriptor.web.FilterDef;
+import org.apache.tomcat.util.descriptor.web.FilterMap;
 
 /** Test-only Streamable HTTP adapter for the official MCP conformance runner. */
 public final class HopMcpConformanceServer {
@@ -63,7 +67,7 @@ public final class HopMcpConformanceServer {
     }
   }
 
-  private static Tomcat createTomcat(
+  static Tomcat createTomcat(
       HttpServletStreamableServerTransportProvider transportProvider, int port) throws IOException {
     Tomcat tomcat = new Tomcat();
     tomcat.setPort(port);
@@ -76,6 +80,28 @@ public final class HopMcpConformanceServer {
     wrapper.setAsyncSupported(true);
     context.addChild(wrapper);
     context.addServletMappingDecoded("/*", "mcpServlet");
+    // An idle SSE GET must deliver its headers before the first event. Otherwise clients
+    // cannot start their stream-read timeout or cancel a resumability probe with no events.
+    FilterDef headers = new FilterDef();
+    headers.setFilterName("mcpGetHeaders");
+    headers.setAsyncSupported("true");
+    headers.setFilter(
+        (request, response, chain) -> {
+          chain.doFilter(request, response);
+          if (request instanceof HttpServletRequest httpRequest
+              && "GET".equals(httpRequest.getMethod())
+              && request.isAsyncStarted()
+              && response instanceof HttpServletResponse httpResponse
+              && httpResponse.getContentType() != null
+              && httpResponse.getContentType().startsWith("text/event-stream")) {
+            httpResponse.flushBuffer();
+          }
+        });
+    context.addFilterDef(headers);
+    FilterMap mapping = new FilterMap();
+    mapping.setFilterName(headers.getFilterName());
+    mapping.addURLPattern("/*");
+    context.addFilterMap(mapping);
     tomcat.getConnector().setProperty("address", "127.0.0.1");
     tomcat.getConnector().setAsyncTimeout(30_000);
     return tomcat;

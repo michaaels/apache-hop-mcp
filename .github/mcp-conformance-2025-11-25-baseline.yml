@@ -9,6 +9,9 @@
 # - a new unlisted failure fails CI;
 # - a baselined scenario that starts passing also fails CI until this file is cleaned up.
 server:
+  # Requires the everything-server fixture tool json_schema_2020_12_tool. Actual Hop
+  # input/output schemas are validated separately; no fake production tool is added.
+  - json-schema-2020-12
   - completion-complete
   - tools-call-simple-text
   - tools-call-image

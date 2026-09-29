@@ -10,7 +10,6 @@ import java.nio.file.attribute.BasicFileAttributes;
 import java.nio.file.attribute.FileTime;
 import java.util.ArrayList;
 import java.util.Collections;
-import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -32,6 +31,7 @@ final class HopProjectDefinitionIndex {
 
   @FunctionalInterface
   interface DefinitionScanner {
+    /** Returns files in stable root-relative lexical order, as supplied by BoundedProjectWalker. */
     BoundedProjectWalker.ScanResult scan(int resultLimit) throws IOException;
   }
 
@@ -213,7 +213,12 @@ final class HopProjectDefinitionIndex {
       throw new IllegalArgumentException("Definition exceeds the configured read limit");
     }
     return read(
-        path, files.relative(path), stamp(attributes), ProjectFiles.MAX_READ_BYTES, new long[1]);
+        path,
+        files.relative(path),
+        stamp(attributes),
+        ProjectFiles.MAX_READ_BYTES,
+        new long[1],
+        new long[1]);
   }
 
   Map<String, Object> metrics() {
@@ -263,13 +268,13 @@ final class HopProjectDefinitionIndex {
     BoundedProjectWalker.ScanResult scan = definitionScanner.scan(ProjectFiles.MAX_SCAN_FILES);
     long scanMillis = elapsedMillis(scanStarted);
     List<BoundedProjectWalker.ScannedFile> scannedFiles = new ArrayList<>(scan.files());
-    scannedFiles.sort(Comparator.comparing(item -> files.relative(item.path())));
 
     Map<String, Entry> previous = cache;
     Map<String, Entry> next = new LinkedHashMap<>();
     boolean truncated = scan.scanLimitReached() || scan.resultsTruncated();
     long indexedBytes = 0L;
     long[] bytesRead = {0};
+    long[] failedReadReservations = {0};
     int cacheHits = 0;
     int cacheMisses = 0;
 
@@ -292,13 +297,17 @@ final class HopProjectDefinitionIndex {
       } else {
         cacheMisses++;
         try {
-          entry =
-              read(
-                  path,
-                  relative,
-                  stamp,
-                  ProjectFiles.MAX_TOTAL_SCAN_BYTES - indexedBytes,
-                  bytesRead);
+          long maximumBytes =
+              Math.min(
+                  ProjectFiles.MAX_READ_BYTES,
+                  Math.min(
+                      ProjectFiles.MAX_TOTAL_SCAN_BYTES - indexedBytes,
+                      ProjectFiles.MAX_TOTAL_SCAN_BYTES
+                          - bytesRead[0]
+                          - failedReadReservations[0]));
+          if (maximumBytes == 0 || size > maximumBytes)
+            throw new IOException("Definition scan read budget exhausted");
+          entry = read(path, relative, stamp, maximumBytes, bytesRead, failedReadReservations);
         } catch (Exception ignored) {
           truncated = true;
           if (cached == null || java.nio.file.Files.notExists(path, LinkOption.NOFOLLOW_LINKS))
@@ -344,9 +353,21 @@ final class HopProjectDefinitionIndex {
   }
 
   private Entry read(
-      Path path, String relative, DefinitionFileStamp stamp, long maximumBytes, long[] bytesRead)
+      Path path,
+      String relative,
+      DefinitionFileStamp stamp,
+      long maximumBytes,
+      long[] bytesRead,
+      long[] failedReadReservations)
       throws Exception {
-    byte[] content = definitionReader.read(path, maximumBytes);
+    byte[] content;
+    try {
+      content = definitionReader.read(path, maximumBytes);
+    } catch (IOException | RuntimeException failed) {
+      // A failed reader may consume bytes without returning them. Reserve its full allowance.
+      failedReadReservations[0] += maximumBytes;
+      throw failed;
+    }
     bytesRead[0] += content.length;
     String xml =
         StandardCharsets.UTF_8

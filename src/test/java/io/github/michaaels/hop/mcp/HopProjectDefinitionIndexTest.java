@@ -60,6 +60,19 @@ class HopProjectDefinitionIndexTest {
   }
 
   @Test
+  void snapshotsKeepTheWalkersStableDefinitionOrder() throws Exception {
+    Files.createDirectories(project.resolve("flows"));
+    Files.writeString(project.resolve("z.hpl"), pipeline("Z"));
+    Files.writeString(project.resolve("flows/m.hwf"), workflow("M"));
+    Files.writeString(project.resolve("a.hpl"), pipeline("A"));
+    HopProjectDefinitionIndex index = new HopProjectDefinitionIndex(new ProjectFiles(project));
+
+    List<String> expected = List.of("a.hpl", "flows/m.hwf", "z.hpl");
+    assertEquals(expected, new ArrayList<>(index.snapshot().definitions().keySet()));
+    assertEquals(expected, new ArrayList<>(index.snapshot().definitions().keySet()));
+  }
+
+  @Test
   void concurrentReadersShareOneRefreshAndOneImmutableSnapshot() throws Exception {
     Files.writeString(project.resolve("one.hpl"), pipeline("A"));
     BlockingProjectFiles files = new BlockingProjectFiles(project);
@@ -215,6 +228,99 @@ class HopProjectDefinitionIndexTest {
   }
 
   @Test
+  void malformedDefinitionsConsumeTheAggregateReadBudget() throws Exception {
+    SyntheticProjectFiles files = syntheticFiles(9, 9);
+    byte[] invalid = new byte[Math.toIntExact(ProjectFiles.MAX_READ_BYTES)];
+    java.util.Arrays.fill(invalid, (byte) ' ');
+    byte[] prefix = "<pipeline><broken>".getBytes(StandardCharsets.UTF_8);
+    System.arraycopy(prefix, 0, invalid, 0, prefix.length);
+    files.setContent(invalid);
+    HopProjectDefinitionIndex.Snapshot snapshot = newIndex(files).snapshot();
+
+    assertTrue(snapshot.truncated());
+    assertTrue(snapshot.definitions().isEmpty());
+    assertEquals(ProjectFiles.MAX_TOTAL_SCAN_BYTES, snapshot.bytesRead());
+    assertEquals(8, files.readCalls.get());
+  }
+
+  @Test
+  void emptyMalformedDefinitionsDoNotReserveUnreadBytes() throws Exception {
+    SyntheticProjectFiles files = syntheticFiles(10, 10);
+    AtomicInteger reads = new AtomicInteger();
+    HopProjectDefinitionIndex index =
+        new HopProjectDefinitionIndex(
+            files.files,
+            new HopMetadataReferenceExtractor(null, null),
+            files::definitionScan,
+            (path, maximumBytes) -> reads.getAndIncrement() < 9 ? new byte[0] : PIPELINE);
+
+    HopProjectDefinitionIndex.Snapshot snapshot = index.snapshot();
+    assertTrue(snapshot.truncated());
+    assertEquals(Set.of("d00009.hpl"), snapshot.definitions().keySet());
+    assertEquals(PIPELINE.length, snapshot.bytesRead());
+    assertEquals(10, reads.get());
+  }
+
+  @Test
+  void validAndMalformedDefinitionsShareTheSameReadBudget() throws Exception {
+    SyntheticProjectFiles files = syntheticFiles(9, 9);
+    byte[] valid =
+        (pipeline("A") + " ".repeat(Math.toIntExact(ProjectFiles.MAX_READ_BYTES) - PIPELINE.length))
+            .getBytes(StandardCharsets.UTF_8);
+    byte[] invalid = valid.clone();
+    invalid[0] = '!';
+    AtomicInteger reads = new AtomicInteger();
+    HopProjectDefinitionIndex index =
+        new HopProjectDefinitionIndex(
+            files.files,
+            new HopMetadataReferenceExtractor(null, null),
+            files::definitionScan,
+            (path, maximumBytes) -> {
+              assertTrue(maximumBytes >= valid.length);
+              return reads.getAndIncrement() == 0 ? valid : invalid;
+            });
+    HopProjectDefinitionIndex.Snapshot snapshot = index.snapshot();
+
+    assertTrue(snapshot.truncated());
+    assertEquals(Set.of("d00000.hpl"), snapshot.definitions().keySet());
+    assertEquals(ProjectFiles.MAX_READ_BYTES, snapshot.indexedBytes());
+    assertEquals(ProjectFiles.MAX_TOTAL_SCAN_BYTES, snapshot.bytesRead());
+    assertEquals(8, reads.get());
+  }
+
+  @Test
+  void failedReadersReserveTheirAllowanceAndDoNotPreventCachedHits() throws Exception {
+    SyntheticProjectFiles files = syntheticFiles(10, 10);
+    for (BoundedProjectWalker.ScannedFile file : files.scanned) {
+      Files.write(file.path(), PIPELINE);
+    }
+    HopProjectDefinitionIndex index = newIndex(files);
+    HopProjectDefinitionIndex.Snapshot good = index.snapshot();
+    List<BoundedProjectWalker.ScannedFile> changed = new ArrayList<>(files.scanned);
+    for (int i = 0; i < 9; i++) {
+      BoundedProjectWalker.ScannedFile original = changed.get(i);
+      changed.set(
+          i, scanned(original.path(), original.size(), original.lastModified(), "changed" + i));
+    }
+    files.setScan(changed, 10, false);
+    files.failReads = true;
+    int readsBefore = files.readCalls.get();
+    HopProjectDefinitionIndex.Snapshot partial = index.snapshot();
+
+    assertTrue(partial.truncated());
+    assertEquals(8, files.readCalls.get() - readsBefore);
+    assertEquals(1, partial.cacheHits());
+    assertEquals(0, partial.bytesRead());
+    assertEquals(good.definitions(), partial.definitions());
+
+    files.failReads = false;
+    HopProjectDefinitionIndex.Snapshot retried = index.snapshot();
+    assertFalse(retried.truncated());
+    assertEquals(9, retried.cacheMisses());
+    assertEquals(1, retried.cacheHits());
+  }
+
+  @Test
   void wholeScanFailureDoesNotCorruptTheLastKnownGoodCacheAndCanRetry() throws Exception {
     SyntheticProjectFiles files = syntheticFiles(1, 1);
     HopProjectDefinitionIndex index = newIndex(files);
@@ -345,6 +451,7 @@ class HopProjectDefinitionIndexTest {
     private volatile boolean scanLimitReached;
     private volatile byte[] content = PIPELINE;
     private volatile boolean failNextScan;
+    private volatile boolean failReads;
     private final AtomicInteger scanCalls = new AtomicInteger();
     private final AtomicInteger readCalls = new AtomicInteger();
 
@@ -385,6 +492,7 @@ class HopProjectDefinitionIndexTest {
 
     byte[] readBytes(Path path, long maximumBytes) throws IOException {
       readCalls.incrementAndGet();
+      if (failReads) throw new IOException("synthetic partial read failure");
       if (content.length > maximumBytes) throw new IOException("synthetic byte limit");
       return content.clone();
     }

@@ -88,6 +88,29 @@ class HopImpactAnalysisServiceTest {
   }
 
   @Test
+  void definitionSelectorLoadsAnUnindexedFileWithoutMutatingThePublishedSnapshot()
+      throws Exception {
+    Files.writeString(
+        project.resolve("outside-index.hpl"),
+        "<pipeline><info><name>target</name></info></pipeline>");
+    ProjectFiles files = new ProjectFiles(project);
+    HopProjectDefinitionIndex index =
+        new HopProjectDefinitionIndex(
+            files,
+            new HopMetadataReferenceExtractor(null, null),
+            ignored -> new BoundedProjectWalker.ScanResult(List.of(), 0, 0, false, false),
+            files::readBytes);
+
+    Map<String, Object> result =
+        new HopImpactAnalysisService(files, null, index)
+            .analyze(null, null, "outside-index.hpl", 5, 10, 10);
+
+    assertEquals(1, result.get("node_count"));
+    assertTrue(String.valueOf(result.get("nodes")).contains("outside-index.hpl"));
+    assertTrue(index.snapshot().definitions().isEmpty());
+  }
+
+  @Test
   void typedConnectionSelectorsMatchPipelineAndWorkflowAndIgnoreUnrelatedStrings()
       throws Exception {
     Files.writeString(

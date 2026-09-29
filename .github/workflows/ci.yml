@@ -33,6 +33,10 @@ jobs:
           cache: maven
       - name: Verify
         run: mvn -B clean verify
+      - name: Test fail-closed verification guards
+        run: python3 scripts/ci/test-verification-gates.py
+      - name: Require real Linux symlink security coverage
+        run: python3 scripts/ci/check-required-tests.py target/surefire-reports
       - name: Read Maven coordinates
         id: maven
         run: |
@@ -73,6 +77,12 @@ jobs:
             target/${{ steps.maven.outputs.artifact }}-${{ steps.maven.outputs.version }}.zip
             target/bom.json
             target/bom.xml
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: hop-native-acceptance-classes
+          path: |
+            target/classes/
+            target/test-classes/
 
   mcp-conformance-2025-11-25:
     needs: build
@@ -144,6 +154,9 @@ jobs:
             --expected-failures ".github/mcp-conformance-2025-11-25-baseline.yml" \
             --output-dir "$REPORT_DIR/results" \
             --verbose 2>&1 | tee "$REPORT_DIR/requirement-set.txt"
+      - name: Reject unlisted raw conformance failures
+        if: always()
+        run: python3 scripts/ci/check-conformance-results.py "$REPORT_DIR/results" .github/mcp-conformance-2025-11-25-baseline.yml
       - name: Stop conformance adapter
         if: always()
         run: |
@@ -199,6 +212,27 @@ jobs:
           unzip -q "$ZIP_PATH" -d hop-runtime/hop
       - name: Exercise installed plugin in a clean Hop process
         run: node scripts/ci/hop-smoke.mjs --hop-dir "$RUNNER_TEMP/hop-runtime/hop" --project "$RUNNER_TEMP/hop-smoke-project" --config-dir "$RUNNER_TEMP/hop-config"
+      - name: Require native reference equivalence and operational acceptance
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/hop-acceptance"
+          export HOP_CONFIG_FOLDER="$RUNNER_TEMP/hop-config"
+          CLASSES="$GITHUB_WORKSPACE/artifacts/hop-native-acceptance-classes"
+          CLASSPATH="$CLASSES/classes:$CLASSES/test-classes:$RUNNER_TEMP/hop-runtime/hop/lib/core/*:$RUNNER_TEMP/hop-runtime/hop/lib/swt/linux/x86_64/*"
+          cd "$RUNNER_TEMP/hop-runtime/hop"
+          java -cp "$CLASSPATH" io.github.michaaels.hop.mcp.HopNativeReferenceAcceptance \
+            "$RUNNER_TEMP/hop-acceptance/references" | tee "$RUNNER_TEMP/hop-acceptance/references.log"
+          java -cp "$CLASSPATH" io.github.michaaels.hop.mcp.HopOperationalFixture \
+            "$RUNNER_TEMP/hop-acceptance/project"
+          cd "$GITHUB_WORKSPACE"
+          node scripts/ci/hop-operational-acceptance.mjs "$RUNNER_TEMP/hop-runtime/hop" \
+            "$RUNNER_TEMP/hop-acceptance/project" "$HOP_CONFIG_FOLDER" "$RUNNER_TEMP/hop-acceptance/operational.json"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: hop-219-native-acceptance-evidence
+          path: ${{ runner.temp }}/hop-acceptance
 
   hop-220-compatibility:
     runs-on: ubuntu-latest
@@ -213,3 +247,5 @@ jobs:
           cache: maven
       - name: Verify against the Apache Hop 2.20 snapshot line
         run: mvn -B -P hop-2.20 clean verify
+      - name: Require real Linux symlink security coverage
+        run: python3 scripts/ci/check-required-tests.py target/surefire-reports

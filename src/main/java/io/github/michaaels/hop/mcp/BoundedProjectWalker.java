@@ -23,6 +23,8 @@ final class BoundedProjectWalker {
 
   record ScannedFile(Path path, long size, FileTime lastModified, Object fileKey) {}
 
+  private record OrderedFile(ScannedFile scannedFile, String relativePath) {}
+
   record ScanResult(
       List<ScannedFile> files,
       int visitedEntries,
@@ -61,10 +63,8 @@ final class BoundedProjectWalker {
     if (resultLimit < 1 || resultLimit > MAX_RESULTS)
       throw new IllegalArgumentException("resultLimit must be between 1 and " + MAX_RESULTS);
 
-    Comparator<ScannedFile> fileOrder =
-        Comparator.comparing(
-            scannedFile -> root.relativize(scannedFile.path()).toString().replace('\\', '/'));
-    PriorityQueue<ScannedFile> files = new PriorityQueue<>(resultLimit, fileOrder.reversed());
+    Comparator<OrderedFile> fileOrder = Comparator.comparing(OrderedFile::relativePath);
+    PriorityQueue<OrderedFile> files = new PriorityQueue<>(resultLimit, fileOrder.reversed());
     int[] visited = {0};
     int[] regularFilesExamined = {0};
     boolean[] scanLimitReached = {false};
@@ -102,7 +102,8 @@ final class BoundedProjectWalker {
           public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) {
             FileVisitResult counted = countEntry();
             if (counted == FileVisitResult.TERMINATE) return counted;
-            if (root.relativize(file).getNameCount() > maxDepth) {
+            Path relativePath = root.relativize(file);
+            if (relativePath.getNameCount() > maxDepth) {
               scanLimitReached[0] = true;
               return FileVisitResult.CONTINUE;
             }
@@ -115,27 +116,39 @@ final class BoundedProjectWalker {
             if (!include.test(file)) return FileVisitResult.CONTINUE;
             ScannedFile scannedFile =
                 new ScannedFile(file, attrs.size(), attrs.lastModifiedTime(), attrs.fileKey());
+            OrderedFile orderedFile =
+                new OrderedFile(scannedFile, relativePath.toString().replace('\\', '/'));
             if (files.size() == resultLimit) {
               resultsTruncated[0] = true;
-              if (fileOrder.compare(scannedFile, files.peek()) < 0) {
+              if (fileOrder.compare(orderedFile, files.peek()) < 0) {
                 files.poll();
-                files.add(scannedFile);
+                files.add(orderedFile);
               }
               return FileVisitResult.CONTINUE;
             }
-            files.add(scannedFile);
+            files.add(orderedFile);
             return FileVisitResult.CONTINUE;
           }
 
           @Override
           public FileVisitResult visitFileFailed(Path file, IOException exception) {
+            // An inaccessible entry makes the scan incomplete, even below numeric limits.
+            scanLimitReached[0] = true;
             FileVisitResult counted = countEntry();
             return counted == FileVisitResult.TERMINATE ? counted : FileVisitResult.CONTINUE;
           }
+
+          @Override
+          public FileVisitResult postVisitDirectory(Path directory, IOException exception) {
+            if (exception != null) scanLimitReached[0] = true;
+            return FileVisitResult.CONTINUE;
+          }
         });
 
-    List<ScannedFile> sortedFiles = new ArrayList<>(files);
-    sortedFiles.sort(fileOrder);
+    List<OrderedFile> orderedFiles = new ArrayList<>(files);
+    orderedFiles.sort(fileOrder);
+    List<ScannedFile> sortedFiles = new ArrayList<>(orderedFiles.size());
+    for (OrderedFile orderedFile : orderedFiles) sortedFiles.add(orderedFile.scannedFile());
     return new ScanResult(
         List.copyOf(sortedFiles),
         visited[0],

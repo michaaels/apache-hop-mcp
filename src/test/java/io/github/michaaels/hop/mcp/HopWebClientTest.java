@@ -7,9 +7,13 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.sun.net.httpserver.HttpServer;
 import java.net.InetSocketAddress;
+import java.net.http.HttpTimeoutException;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.Map;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.AfterEach;
@@ -77,6 +81,94 @@ class HopWebClientTest {
   @AfterEach
   void tearDown() {
     server.stop(0);
+  }
+
+  @Test
+  void timeoutIncludesAStalledBodyAndTheClientCanRetry() throws Exception {
+    CountDownLatch bodyStarted = new CountDownLatch(1);
+    CountDownLatch releaseBody = new CountDownLatch(1);
+    CountDownLatch handlerFinished = new CountDownLatch(1);
+    server.createContext(
+        "/hop/stalled",
+        exchange -> {
+          try {
+            exchange.sendResponseHeaders(200, 2);
+            exchange.getResponseBody().write('o');
+            exchange.getResponseBody().flush();
+            bodyStarted.countDown();
+            try {
+              releaseBody.await(10, TimeUnit.SECONDS);
+            } catch (InterruptedException interrupted) {
+              Thread.currentThread().interrupt();
+            }
+          } finally {
+            exchange.close();
+            handlerFinished.countDown();
+          }
+        });
+    HopWebClient client = new HopWebClient(baseUrl(), null, null, null, 1);
+    try (var callers = Executors.newSingleThreadExecutor()) {
+      var request =
+          callers.submit(
+              () ->
+                  assertThrows(
+                      HttpTimeoutException.class,
+                      () -> client.request("GET", "/stalled", Map.of())));
+      try {
+        assertTrue(bodyStarted.await(5, TimeUnit.SECONDS));
+        request.get(3, TimeUnit.SECONDS);
+      } finally {
+        releaseBody.countDown();
+      }
+    }
+    assertTrue(handlerFinished.await(5, TimeUnit.SECONDS));
+    assertEquals(200, client.request("GET", "/status", Map.of()).get("status"));
+  }
+
+  @Test
+  void interruptedBodyReceptionReleasesTheCaller() throws Exception {
+    CountDownLatch started = new CountDownLatch(1);
+    CountDownLatch release = new CountDownLatch(1);
+    server.createContext(
+        "/hop/interrupted",
+        exchange -> {
+          try {
+            exchange.sendResponseHeaders(200, 2);
+            exchange.getResponseBody().write('o');
+            exchange.getResponseBody().flush();
+            started.countDown();
+            try {
+              release.await(10, TimeUnit.SECONDS);
+            } catch (InterruptedException interrupted) {
+              Thread.currentThread().interrupt();
+            }
+          } finally {
+            exchange.close();
+          }
+        });
+    HopWebClient client = new HopWebClient(baseUrl(), null, null, null, 5);
+    AtomicReference<Throwable> failure = new AtomicReference<>();
+    Thread caller =
+        Thread.ofVirtual()
+            .start(
+                () -> {
+                  try {
+                    client.request("GET", "/interrupted", Map.of());
+                  } catch (Throwable exception) {
+                    failure.set(exception);
+                  }
+                });
+    try {
+      assertTrue(started.await(5, TimeUnit.SECONDS));
+      caller.interrupt();
+      caller.join(3000);
+      assertFalse(caller.isAlive());
+      assertTrue(failure.get() instanceof InterruptedException);
+    } finally {
+      release.countDown();
+      caller.interrupt();
+      caller.join(3000);
+    }
   }
 
   @Test

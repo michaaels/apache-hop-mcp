@@ -88,6 +88,8 @@ final class BoundedProjectWalker {
           public FileVisitResult preVisitDirectory(Path directory, BasicFileAttributes attrs) {
             FileVisitResult counted = countEntry();
             if (counted == FileVisitResult.TERMINATE) return counted;
+            // Windows junctions are directories and "other", not symbolic links.
+            if (attrs.isSymbolicLink() || attrs.isOther()) return FileVisitResult.SKIP_SUBTREE;
             if (normalizedInternal != null
                 && directory.toAbsolutePath().normalize().startsWith(normalizedInternal))
               return FileVisitResult.SKIP_SUBTREE;
@@ -107,7 +109,8 @@ final class BoundedProjectWalker {
               scanLimitReached[0] = true;
               return FileVisitResult.CONTINUE;
             }
-            if (!attrs.isRegularFile()) return FileVisitResult.CONTINUE;
+            if (attrs.isSymbolicLink() || attrs.isOther() || !attrs.isRegularFile())
+              return FileVisitResult.CONTINUE;
             if (++regularFilesExamined[0] > maxFilesScanned) {
               regularFilesExamined[0]--;
               scanLimitReached[0] = true;

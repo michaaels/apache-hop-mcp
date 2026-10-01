@@ -57,13 +57,13 @@ When using a custom `HOP_CONFIG_FOLDER`, initialize it before starting `hop mcp`
 | 2.2.0 | 2.19.0 compile baseline; 2.20.0-SNAPSHOT profile | 21 | 2.0.1 | 2025-11-25 |
 | 2.2.1 | 2.19.0 compile baseline; 2.20.0-SNAPSHOT profile | 21 | 2.0.1 | 2025-11-25 |
 | 2.2.2 | 2.19.0 compile baseline; 2.20.0-SNAPSHOT profile | 21 | 2.0.1 | 2025-11-25 |
-| 2.2.3 | 2.19.0 compile baseline; 2.20.0-SNAPSHOT profile | 21 | 2.0.1 | 2025-11-25 |
+| 2.2.4 | 2.19.0 compile baseline; 2.20.0-SNAPSHOT profile | 21 | 2.0.1 | 2025-11-25 |
 
 The MCP Java SDK 2.0.1 supports protocol revision `2025-11-25`. Revision `2026-07-28` is not supported by this SDK line and is not implemented here. Apache Hop 2.19.0 is the stable compile baseline; the `hop-2.20` profile is a compatibility check against the 2.20.0-SNAPSHOT line, not a stable-support promise. The CI workflow is configured to verify the 2.19.0 archive checksum, install the Marketplace ZIP into a clean distribution, and exercise `hop mcp` over STDIO, as well as build against the 2.20.0-SNAPSHOT line. Installation through the published Hop Marketplace catalog requires post-release verification.
 
 ## Installation
 
-Build the Marketplace ZIP and CycloneDX SBOM with `mvn -B clean verify`. This release checkout builds `target/hop-mcp-connector-2.2.3.zip`. SBOM files are `target/bom.json` and `target/bom.xml`. Install the ZIP into Hop's `plugins/misc/hop-mcp-connector/` directory or use the repository/catalog metadata in `marketplace/`. Restart Hop, then run `hop mcp --help`.
+Build the Marketplace ZIP and CycloneDX SBOM with `mvn -B clean verify`. This release checkout builds `target/hop-mcp-connector-2.2.4.zip`. SBOM files are `target/bom.json` and `target/bom.xml`. Install the ZIP into Hop's `plugins/misc/hop-mcp-connector/` directory or use the repository/catalog metadata in `marketplace/`. Restart Hop, then run `hop mcp --help`.
 
 Hop runtime libraries (`hop-core`, `hop-engine`, and `hop-ui`) are provided by Hop and are not included in the ZIP. The ZIP includes the project license and notice.
 
@@ -127,7 +127,7 @@ The metadata tools use Apache Hop's native metadata provider, serializers, and m
 
 `hop_metadata_dependencies` and `hop_impact_analysis` share one incremental definition index. It carries filesystem attributes from the bounded walk, uses size/mtime/file key as a change stamp, and reparses only changed or invalidated definitions. Concurrent readers share a generation-aware refresh; a mutation during a refresh remains dirty for the next published generation. Typed references prefer native Hop dependencies, then `@HopMetadataProperty` values, then clearly marked exact-leaf XML fallback. The fallback does not search SQL, descriptions, notes, or component names.
 
-`hop_runtime_metrics` is read-only and enabled by default. It returns aggregate index counters, the last refresh measurements, deep-check queue counters, and a `HEALTHY`/`DEGRADED` worker state. It does not include project content, environment variables, connection details, or arbitrary system properties.
+`hop_runtime_metrics` is read-only and enabled by default. It returns instance-local index counters and last refresh measurements, plus connection/schema worker counters and a `HEALTHY`/`DEGRADED` state shared by the classloader/JVM. A cancelled call that still runs keeps the worker degraded; new connection/schema checks receive retryable `DEEP_CHECK_WORKER_UNHEALTHY` until it exits. These worker counters do not automatically include `hop_deep_check` or execution. The JDBC global-state guard restores its changes when a call exits, but cannot isolate concurrent changes made by other Hop operations. Metrics do not include project content, environment variables, connection details, or arbitrary system properties.
 
 `hop_resolve_configuration` reads a native pipeline/workflow run configuration for a project-relative `.hpl` or `.hwf` path, applies bounded parameters, resolves values through the project variable hierarchy, reports unresolved references, and redacts variables whose names or references indicate secrets. It does not expose the process environment or mutate metadata. `hop_data_profile` reads only stored `ExecutionData` rows from the selected native location, with bounded fields, rows, distinct tracking and samples; it never runs a pipeline or performs an arbitrary source scan.
 
@@ -149,9 +149,9 @@ A same-runner synthetic benchmark on GitHub Actions (Java 21.0.12.1, 4 available
 
 Definition cache stamps use size, last-modified time and `fileKey` when the filesystem provides one. `fileKey` may be null, and the stamp is a change-detection hint rather than a content-integrity guarantee; warm snapshots do not hash every definition.
 
-The separate [project-index benchmark workflow](.github/workflows/project-index-benchmark.yml) runs manually or weekly. It compares `v2.2.1` with the selected `main` commit on one runner and shared synthetic fixtures, then emits `benchmark.json`, `benchmark.csv`, and a Job Summary. Latency is informational; correctness checks cover cold/warm reuse, one-file changes, the 64-node impact chain, mixed files, definition bounds, and truncation.
+The separate [project-index benchmark workflow](.github/workflows/project-index-benchmark.yml) runs manually or weekly. It selects the newest compatible published stable ancestor release, or an explicit `baseline_tag`, and compares it with the selected commit on one runner and shared synthetic fixtures, then emits `benchmark.json`, `benchmark.csv`, and a Job Summary. Latency is informational; correctness checks cover cold/warm reuse, one-file changes, the 64-node impact chain, mixed files, definition bounds, and truncation.
 
-For distribution-level measurements, the [full-Hop benchmark](docs/full-hop-benchmark.md) compares published `2.2.2` with the development ZIP using alternating fresh JVMs and identical result hashes. It stores raw reports outside `target/`, separately from the synthetic Maven benchmark.
+For distribution-level measurements, the manual Windows [full-Hop benchmark](docs/full-hop-benchmark.md) compares the selected published baseline with the development ZIP using alternating fresh JVMs and identical result hashes. It stores raw reports and provenance outside `target/`, separately from the synthetic Maven benchmark. This synthetic matrix does not certify third-party plugins or replace acceptance on real projects.
 
 ## Live UI
 
@@ -186,7 +186,7 @@ The CI workflow also checks the Marketplace ZIP layout, license and notice files
 
 No official MCP Registry `server.json` is included: the registry's current package types do not include Apache Hop Marketplace ZIPs. MCPB is a separate package format and is not used to label this Marketplace artifact.
 
-Inspect the release package with `unzip -l target/hop-mcp-connector-2.2.3.zip`; it must contain `plugins/misc/hop-mcp-connector/`, `LICENSE`, and `NOTICE`, and must not contain Hop runtime jars.
+Inspect the release package with `unzip -l target/hop-mcp-connector-2.2.4.zip`; it must contain `plugins/misc/hop-mcp-connector/`, `LICENSE`, and `NOTICE`, and must not contain Hop runtime jars.
 
 ## Security reporting
 

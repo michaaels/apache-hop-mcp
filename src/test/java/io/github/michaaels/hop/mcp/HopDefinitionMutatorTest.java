@@ -16,6 +16,7 @@ import java.nio.file.attribute.FileTime;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
 import org.apache.hop.core.HopEnvironment;
@@ -365,6 +366,57 @@ class HopDefinitionMutatorTest {
     try (var files = Files.list(outside)) {
       assertTrue(files.findAny().isEmpty());
     }
+  }
+
+  @Test
+  void rejectsWindowsJunctionsAtEveryBackupDirectoryLevel() throws Exception {
+    Assumptions.assumeTrue(System.getProperty("os.name").toLowerCase(Locale.ROOT).contains("win"));
+    Path outside = Files.createDirectory(project.resolve("outside-junction-target"));
+    WorkflowMeta original = new WorkflowMeta();
+    Path target = project.resolve("junction.hwf");
+    original.setFilename(target.toString());
+    original.setNameSynchronizedWithFilename(false);
+    original.setName("Before");
+    byte[] originalXml = original.getXml(new Variables()).getBytes(StandardCharsets.UTF_8);
+    Files.write(target, originalXml);
+    HopDefinitionMutator mutator =
+        new HopDefinitionMutator(
+            new ProjectFiles(project), new Variables(), new MemoryMetadataProvider());
+    Path control = project.resolve(".hop-mcp");
+    for (int level = 0; level < 3; level++) {
+      if (level >= 1) Files.createDirectories(control);
+      if (level == 2) Files.createDirectories(control.resolve("backups"));
+      Path link =
+          switch (level) {
+            case 0 -> control;
+            case 1 -> control.resolve("backups");
+            default -> control.resolve("backups").resolve(UUID.randomUUID().toString());
+          };
+      createJunction(link, outside);
+      try {
+        assertThrows(
+            IOException.class,
+            () ->
+                mutator.mutate(
+                    "junction.hwf",
+                    "workflow",
+                    List.of(Map.of("operation", "set_name", "value", "After")),
+                    ProjectFiles.sha256(originalXml),
+                    true));
+        assertArrayEquals(originalXml, Files.readAllBytes(target));
+      } finally {
+        Files.delete(link);
+      }
+    }
+  }
+
+  private static void createJunction(Path link, Path target) throws Exception {
+    Process process =
+        new ProcessBuilder("cmd", "/c", "mklink", "/J", link.toString(), target.toString())
+            .redirectErrorStream(true)
+            .start();
+    String output = new String(process.getInputStream().readAllBytes());
+    assertEquals(0, process.waitFor(), output);
   }
 
   @Test

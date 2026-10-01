@@ -64,9 +64,7 @@ final class ProjectFiles {
     if (!Files.exists(candidate, LinkOption.NOFOLLOW_LINKS))
       throw new java.nio.file.NoSuchFileException(relative);
     Path real = candidate.toRealPath();
-    if (!real.startsWith(root))
-      throw McpException.security(
-          "PATH_OUTSIDE_PROJECT", "Resolved path must remain under the configured project root.");
+    requirePublicPath(real);
     return real;
   }
 
@@ -158,7 +156,7 @@ final class ProjectFiles {
           && size <= MAX_TOTAL_SCAN_BYTES - hashedBytes
           && Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS)) {
         try {
-          BoundedRead read = readBoundedBytes(path, MAX_TOTAL_SCAN_BYTES - hashedBytes);
+          BoundedRead read = readScannedBytes(path, MAX_TOTAL_SCAN_BYTES - hashedBytes);
           hashedBytes += read.bytes().length;
           if (read.sourceChanged()) {
             entry.put("sha256", "");
@@ -245,7 +243,7 @@ final class ProjectFiles {
       String relative = relative(path);
       BoundedRead read;
       try {
-        read = readBoundedBytes(path, remainingBytes);
+        read = readScannedBytes(path, remainingBytes);
         scannedBytes += read.bytes().length;
         if (read.sourceChanged()) {
           scanLimitReached = true;
@@ -382,19 +380,17 @@ final class ProjectFiles {
     if (parent == null || !Files.isDirectory(parent, LinkOption.NOFOLLOW_LINKS))
       throw new java.nio.file.NoSuchFileException(relative);
     Path realParent = parent.toRealPath();
-    if (!realParent.startsWith(root))
-      throw McpException.security(
-          "PATH_OUTSIDE_PROJECT", "Resolved parent must remain under the configured project root.");
+    requirePublicPath(realParent);
+    Path canonicalTarget = realParent.resolve(candidate.getFileName());
     if (Files.exists(candidate, LinkOption.NOFOLLOW_LINKS)) {
       if (Files.isSymbolicLink(candidate)
           || !Files.isRegularFile(candidate, LinkOption.NOFOLLOW_LINKS))
         throw new IOException("Not a regular file: " + relative);
       Path real = candidate.toRealPath();
-      if (!real.startsWith(root))
-        throw McpException.security(
-            "PATH_OUTSIDE_PROJECT", "Resolved path must remain under the configured project root.");
+      requirePublicPath(real);
     }
-    return candidate;
+    requirePublicPath(canonicalTarget);
+    return canonicalTarget;
   }
 
   byte[] readBytes(Path path) throws IOException {
@@ -405,6 +401,24 @@ final class ProjectFiles {
     BoundedRead read = readBoundedBytes(path, maximumBytes);
     if (read.sourceChanged()) throw new IOException("File changed while reading");
     return read.bytes();
+  }
+
+  byte[] readProjectBytes(Path path, long maximumBytes) throws IOException {
+    BoundedRead read = readScannedBytes(path, maximumBytes);
+    if (read.sourceChanged()) throw new IOException("File changed while reading");
+    return read.bytes();
+  }
+
+  private BoundedRead readScannedBytes(Path path, long maximumBytes) throws IOException {
+    requirePublicPath(path.toRealPath());
+    return readBoundedBytes(path, maximumBytes);
+  }
+
+  private void requirePublicPath(Path path) throws IOException {
+    if (!path.startsWith(root))
+      throw McpException.security(
+          "PATH_OUTSIDE_PROJECT", "Resolved path must remain under the configured project root.");
+    rejectInternalPath(path);
   }
 
   private BoundedRead readBoundedBytes(Path path, long maximumBytes) throws IOException {

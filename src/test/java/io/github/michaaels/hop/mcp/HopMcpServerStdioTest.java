@@ -3,6 +3,8 @@ package io.github.michaaels.hop.mcp;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTimeout;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.core.type.TypeReference;
@@ -12,6 +14,7 @@ import io.modelcontextprotocol.json.schema.JsonSchemaValidator;
 import io.modelcontextprotocol.json.schema.jackson3.JacksonJsonSchemaValidatorSupplier;
 import java.io.BufferedReader;
 import java.io.ByteArrayOutputStream;
+import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.PipedInputStream;
 import java.io.PipedOutputStream;
@@ -21,15 +24,19 @@ import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import org.apache.hop.core.HopEnvironment;
+import org.apache.hop.core.database.DatabaseMeta;
 import org.apache.hop.core.variables.Variables;
 import org.apache.hop.metadata.serializer.memory.MemoryMetadataProvider;
 import org.apache.hop.pipeline.PipelineMeta;
@@ -52,6 +59,102 @@ class HopMcpServerStdioTest {
   @BeforeAll
   static void initializeHopPlugins() throws Exception {
     HopEnvironment.init();
+  }
+
+  @Test
+  void unansweredStdioReadTimesOutAndCleansUp() throws Exception {
+    assertTimeout(
+        Duration.ofSeconds(4),
+        () -> {
+          try (PipedInputStream input = new PipedInputStream();
+              PipedOutputStream output = new PipedOutputStream(input);
+              ResponsePump responses = new ResponsePump(input, output, 1)) {
+            assertThrows(TimeoutException.class, responses::readResponse);
+          }
+        });
+  }
+
+  @Test
+  void earlyStdioCloseFailsPromptly() throws Exception {
+    assertTimeout(
+        Duration.ofSeconds(4),
+        () -> {
+          try (PipedInputStream input = new PipedInputStream();
+              PipedOutputStream output = new PipedOutputStream(input);
+              ResponsePump responses = new ResponsePump(input, output, 1)) {
+            output.close();
+            assertThrows(AssertionError.class, responses::readResponse);
+          }
+        });
+  }
+
+  @Test
+  void degradedWorkerReturnsTypedRetryableMcpError() throws Exception {
+    MemoryMetadataProvider provider = new MemoryMetadataProvider();
+    DatabaseMeta connection = new DatabaseMeta();
+    connection.setName("WAREHOUSE");
+    provider.getSerializer(DatabaseMeta.class).save(connection);
+    CountDownLatch started = new CountDownLatch(1);
+    CountDownLatch release = new CountDownLatch(1);
+    Future<?> stuck =
+        HopDeepCheckExecutor.submit(
+            () -> {
+              started.countDown();
+              while (release.getCount() > 0) {
+                try {
+                  release.await();
+                } catch (InterruptedException ignored) {
+                  // Simulate a JDBC driver that has not returned yet.
+                }
+              }
+              return null;
+            });
+    try {
+      assertTrue(started.await(5, TimeUnit.SECONDS));
+      HopDeepCheckExecutor.cancel(stuck, true);
+      try (PipedInputStream serverInput = new PipedInputStream();
+          PipedOutputStream clientOutput = new PipedOutputStream(serverInput);
+          PipedInputStream clientInput = new PipedInputStream();
+          PipedOutputStream serverOutput = new PipedOutputStream(clientInput);
+          ResponsePump responses = new ResponsePump(clientInput, serverOutput);
+          PrintWriter requests = new PrintWriter(clientOutput, true, StandardCharsets.UTF_8);
+          HopMcpServer server =
+              new HopMcpServer(
+                  new HopMcpService(
+                      new ProjectFiles(project),
+                      new Variables(),
+                      provider,
+                      true,
+                      false,
+                      false,
+                      false,
+                      null),
+                  serverInput,
+                  serverOutput)) {
+        requests.println(
+            "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-11-25\",\"capabilities\":{},\"clientInfo\":{\"name\":\"degraded-worker-test\",\"version\":\"1\"}}}");
+        assertResponseId(responses.readResponse(), 1);
+        requests.println(
+            "{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\",\"params\":{}}");
+        requests.println("{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/list\",\"params\":{}}");
+        Map<String, Map<String, Object>> schemas = extractOutputSchemas(responses.readResponse());
+        requests.println(toolCall(3, "hop_test_connection", "{\"name\":\"WAREHOUSE\"}"));
+        String response = responses.readResponse();
+        assertResponseId(response, 3);
+        assertTrue(response.contains("\"isError\":true"), response);
+        assertStructuredOutputConforms(response, "hop_test_connection", schemas);
+        assertTrue(response.contains("DEEP_CHECK_WORKER_UNHEALTHY"), response);
+        assertTrue(response.contains("PRECONDITION_FAILED"), response);
+        assertTrue(response.contains("\\\"retryable\\\":true"), response);
+        clientOutput.close();
+        server.awaitEof();
+      }
+    } finally {
+      release.countDown();
+      long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+      while ("DEGRADED".equals(HopDeepCheckExecutor.metrics().get("health"))
+          && System.nanoTime() < deadline) Thread.sleep(10);
+    }
   }
 
   @Test
@@ -81,10 +184,8 @@ class HopMcpServerStdioTest {
           PipedOutputStream clientOutput = new PipedOutputStream(serverInput);
           PipedInputStream clientInput = new PipedInputStream();
           PipedOutputStream serverOutput = new PipedOutputStream(clientInput);
-          BufferedReader responses =
-              new BufferedReader(new InputStreamReader(clientInput, StandardCharsets.UTF_8));
+          ResponsePump responses = new ResponsePump(clientInput, serverOutput);
           PrintWriter requests = new PrintWriter(clientOutput, true, StandardCharsets.UTF_8);
-          ExecutorService reader = Executors.newSingleThreadExecutor();
           HopMcpServer server =
               new HopMcpServer(
                   new HopMcpService(
@@ -103,7 +204,7 @@ class HopMcpServerStdioTest {
           {"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"stdio-contract-test","version":"1"}}}
           """
                 .trim());
-        String initialized = readResponse(reader, responses);
+        String initialized = responses.readResponse();
         assertResponseId(initialized, 1);
         assertTrue(initialized.contains("\"name\":\"hop-mcp-connector\""));
         assertTrue(initialized.contains("\"protocolVersion\":\"2025-11-25\""));
@@ -113,7 +214,7 @@ class HopMcpServerStdioTest {
             "{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\",\"params\":{}}");
 
         requests.println("{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/list\",\"params\":{}}");
-        String tools = readResponse(reader, responses);
+        String tools = responses.readResponse();
         assertResponseId(tools, 2);
         assertTrue(tools.contains("hop_config"), tools);
         assertTrue(tools.contains("hop_runtime_metrics"), tools);
@@ -148,7 +249,7 @@ class HopMcpServerStdioTest {
         Map<String, Map<String, Object>> outputSchemas = extractOutputSchemas(tools);
 
         requests.println(toolCall(3, "hop_config", "{}"));
-        String config = readResponse(reader, responses);
+        String config = responses.readResponse();
         assertSuccessfulToolResponse(config, 3);
         assertStructuredOutputConforms(config, "hop_config", outputSchemas);
         assertTrue(config.contains("\\\"transport\\\":\\\"stdio\\\""));
@@ -171,7 +272,7 @@ class HopMcpServerStdioTest {
         }
 
         requests.println(toolCall(73, "hop_runtime_metrics", "{}"));
-        String runtimeMetrics = readResponse(reader, responses);
+        String runtimeMetrics = responses.readResponse();
         assertSuccessfulToolResponse(runtimeMetrics, 73);
         assertStructuredOutputConforms(runtimeMetrics, "hop_runtime_metrics", outputSchemas);
         assertTrue(runtimeMetrics.contains("project_index"), runtimeMetrics);
@@ -181,7 +282,7 @@ class HopMcpServerStdioTest {
         assertFalse(runtimeMetrics.contains("token"), runtimeMetrics);
 
         requests.println(toolCall(60, "hop_metadata_types", "{\"limit\":10}"));
-        String metadataTypes = readResponse(reader, responses);
+        String metadataTypes = responses.readResponse();
         assertSuccessfulToolResponse(metadataTypes, 60);
         assertStructuredOutputConforms(metadataTypes, "hop_metadata_types", outputSchemas);
         assertTrue(metadataTypes.contains("pipeline-run-configuration"), metadataTypes);
@@ -189,7 +290,7 @@ class HopMcpServerStdioTest {
         requests.println(
             toolCall(
                 61, "hop_metadata_list", "{\"type\":\"pipeline-run-configuration\",\"limit\":10}"));
-        String metadataList = readResponse(reader, responses);
+        String metadataList = responses.readResponse();
         assertSuccessfulToolResponse(metadataList, 61);
         assertStructuredOutputConforms(metadataList, "hop_metadata_list", outputSchemas);
         assertTrue(metadataList.contains("local"), metadataList);
@@ -199,7 +300,7 @@ class HopMcpServerStdioTest {
                 62,
                 "hop_metadata_get",
                 "{\"type\":\"pipeline-run-configuration\",\"name\":\"local\"}"));
-        String metadataGet = readResponse(reader, responses);
+        String metadataGet = responses.readResponse();
         assertSuccessfulToolResponse(metadataGet, 62);
         assertStructuredOutputConforms(metadataGet, "hop_metadata_get", outputSchemas);
         assertTrue(metadataGet.contains("redaction_applied"), metadataGet);
@@ -209,7 +310,7 @@ class HopMcpServerStdioTest {
                 63,
                 "hop_metadata_dependencies",
                 "{\"type\":\"pipeline-run-configuration\",\"name\":\"local\",\"limit\":10}"));
-        String metadataDependencies = readResponse(reader, responses);
+        String metadataDependencies = responses.readResponse();
         assertSuccessfulToolResponse(metadataDependencies, 63);
         assertStructuredOutputConforms(
             metadataDependencies, "hop_metadata_dependencies", outputSchemas);
@@ -219,50 +320,50 @@ class HopMcpServerStdioTest {
                 64,
                 "hop_resolve_configuration",
                 "{\"path\":\"valid.hpl\",\"run_configuration\":\"local\",\"parameters\":{}}"));
-        String resolvedRunConfiguration = readResponse(reader, responses);
+        String resolvedRunConfiguration = responses.readResponse();
         assertSuccessfulToolResponse(resolvedRunConfiguration, 64);
         assertStructuredOutputConforms(
             resolvedRunConfiguration, "hop_resolve_configuration", outputSchemas);
         assertTrue(resolvedRunConfiguration.contains("\"plugin_id\""), resolvedRunConfiguration);
 
         requests.println(toolCall(4, "hop_validate", "{\"path\":\"valid.hpl\"}"));
-        String firstValidation = readResponse(reader, responses);
+        String firstValidation = responses.readResponse();
         assertSuccessfulToolResponse(firstValidation, 4);
         assertStructuredOutputConforms(firstValidation, "hop_validate", outputSchemas);
         assertTrue(firstValidation.contains("\\\"valid\\\":true"));
 
         requests.println(toolCall(5, "hop_validate", "{\"path\":\"valid.hpl\"}"));
-        String secondValidation = readResponse(reader, responses);
+        String secondValidation = responses.readResponse();
         assertSuccessfulToolResponse(secondValidation, 5);
         assertTrue(secondValidation.contains("\\\"valid\\\":true"));
 
         requests.println(toolCall(10, "hop_capabilities", "{}"));
-        String capabilities = readResponse(reader, responses);
+        String capabilities = responses.readResponse();
         assertSuccessfulToolResponse(capabilities, 10);
         assertStructuredOutputConforms(capabilities, "hop_capabilities", outputSchemas);
 
         requests.println(toolCall(11, "hop_inspect", "{\"path\":\"valid.hpl\"}"));
-        String inspection = readResponse(reader, responses);
+        String inspection = responses.readResponse();
         assertSuccessfulToolResponse(inspection, 11);
         assertStructuredOutputConforms(inspection, "hop_inspect", outputSchemas);
 
         requests.println(toolCall(47, "hop_context", "{\"path\":\"valid.hpl\"}"));
-        String context = readResponse(reader, responses);
+        String context = responses.readResponse();
         assertSuccessfulToolResponse(context, 47);
         assertStructuredOutputConforms(context, "hop_context", outputSchemas);
 
         requests.println(toolCall(48, "hop_live_ui_status", "{}"));
-        String liveUiStatus = readResponse(reader, responses);
+        String liveUiStatus = responses.readResponse();
         assertSuccessfulToolResponse(liveUiStatus, 48);
         assertStructuredOutputConforms(liveUiStatus, "hop_live_ui_status", outputSchemas);
 
         requests.println(toolCall(49, "hop_test_definition", "{\"path\":\"valid.hpl\"}"));
-        String testDefinition = readResponse(reader, responses);
+        String testDefinition = responses.readResponse();
         assertSuccessfulToolResponse(testDefinition, 49);
         assertStructuredOutputConforms(testDefinition, "hop_test_definition", outputSchemas);
 
         requests.println(toolCall(50, "hop_deep_check", "{\"path\":\"valid.hpl\"}"));
-        String deepCheck = readResponse(reader, responses);
+        String deepCheck = responses.readResponse();
         assertResponseId(deepCheck, 50);
         assertStructuredOutputConforms(deepCheck, "hop_deep_check", outputSchemas);
 
@@ -271,7 +372,7 @@ class HopMcpServerStdioTest {
                 69,
                 "hop_schema_compare",
                 "{\"connection\":\"missing-connection\",\"schema\":\"public\",\"table\":\"customers\",\"expected\":[{\"name\":\"id\",\"type\":\"Integer\"}]}"));
-        String schemaCompare = readResponse(reader, responses);
+        String schemaCompare = responses.readResponse();
         assertResponseId(schemaCompare, 69);
         assertTrue(schemaCompare.contains("\"isError\":true"), schemaCompare);
         assertStructuredOutputConforms(schemaCompare, "hop_schema_compare", outputSchemas);
@@ -279,7 +380,7 @@ class HopMcpServerStdioTest {
         requests.println(
             toolCall(
                 70, "hop_definition_diff", "{\"path_a\":\"valid.hpl\",\"path_b\":\"valid.hpl\"}"));
-        String definitionDiff = readResponse(reader, responses);
+        String definitionDiff = responses.readResponse();
         assertSuccessfulToolResponse(definitionDiff, 70);
         assertStructuredOutputConforms(definitionDiff, "hop_definition_diff", outputSchemas);
         assertTrue(definitionDiff.contains("\"identical\":true"), definitionDiff);
@@ -289,7 +390,7 @@ class HopMcpServerStdioTest {
                 71,
                 "hop_impact_analysis",
                 "{\"definition\":\"valid.hpl\",\"max_depth\":5,\"max_edges\":10,\"max_results\":10}"));
-        String impactAnalysis = readResponse(reader, responses);
+        String impactAnalysis = responses.readResponse();
         assertSuccessfulToolResponse(impactAnalysis, 71);
         assertStructuredOutputConforms(impactAnalysis, "hop_impact_analysis", outputSchemas);
         assertTrue(impactAnalysis.contains("\"node_count\":1"), impactAnalysis);
@@ -299,40 +400,40 @@ class HopMcpServerStdioTest {
                 72,
                 "hop_environment_diff",
                 "{\"path_a\":\"valid.hpl\",\"path_b\":\"valid.hpl\",\"run_configuration_a\":\"local\",\"run_configuration_b\":\"local\"}"));
-        String environmentDiff = readResponse(reader, responses);
+        String environmentDiff = responses.readResponse();
         assertSuccessfulToolResponse(environmentDiff, 72);
         assertStructuredOutputConforms(environmentDiff, "hop_environment_diff", outputSchemas);
         assertTrue(environmentDiff.contains("\"identical\":true"), environmentDiff);
 
         requests.println(toolCall(12, "hop_catalog", "{}"));
-        String catalog = readResponse(reader, responses);
+        String catalog = responses.readResponse();
         assertSuccessfulToolResponse(catalog, 12);
         assertStructuredOutputConforms(catalog, "hop_catalog", outputSchemas);
 
         requests.println(toolCall(40, "hop_list_definitions", "{\"limit\":10}"));
-        String definitions = readResponse(reader, responses);
+        String definitions = responses.readResponse();
         assertSuccessfulToolResponse(definitions, 40);
         assertStructuredOutputConforms(definitions, "hop_list_definitions", outputSchemas);
 
         requests.println(
             toolCall(41, "hop_read_text", "{\"path\":\"valid.hpl\",\"max_bytes\":1024}"));
-        String readText = readResponse(reader, responses);
+        String readText = responses.readResponse();
         assertSuccessfulToolResponse(readText, 41);
         assertStructuredOutputConforms(readText, "hop_read_text", outputSchemas);
 
         requests.println(toolCall(42, "hop_search", "{\"query\":\"stdio-contract\",\"limit\":10}"));
-        String search = readResponse(reader, responses);
+        String search = responses.readResponse();
         assertSuccessfulToolResponse(search, 42);
         assertStructuredOutputConforms(search, "hop_search", outputSchemas);
 
         requests.println(
             toolCall(43, "hop_find_table", "{\"table\":\"table_not_found\",\"limit\":10}"));
-        String findTable = readResponse(reader, responses);
+        String findTable = responses.readResponse();
         assertSuccessfulToolResponse(findTable, 43);
         assertStructuredOutputConforms(findTable, "hop_find_table", outputSchemas);
 
         requests.println(toolCall(44, "hop_dependencies", "{\"path\":\"valid.hpl\"}"));
-        String dependencies = readResponse(reader, responses);
+        String dependencies = responses.readResponse();
         assertSuccessfulToolResponse(dependencies, 44);
         assertStructuredOutputConforms(dependencies, "hop_dependencies", outputSchemas);
 
@@ -341,23 +442,23 @@ class HopMcpServerStdioTest {
                 45,
                 "hop_component_lineage",
                 "{\"path\":\"valid.hpl\",\"component\":\"start\",\"max_edges\":10}"));
-        String lineage = readResponse(reader, responses);
+        String lineage = responses.readResponse();
         assertSuccessfulToolResponse(lineage, 45);
         assertStructuredOutputConforms(lineage, "hop_component_lineage", outputSchemas);
 
         requests.println(toolCall(46, "hop_plugins", "{\"limit\":10}"));
-        String plugins = readResponse(reader, responses);
+        String plugins = responses.readResponse();
         assertSuccessfulToolResponse(plugins, 46);
         assertStructuredOutputConforms(plugins, "hop_plugins", outputSchemas);
 
         requests.println(toolCall(51, "hop_logs", "{}"));
-        String logs = readResponse(reader, responses);
+        String logs = responses.readResponse();
         assertSuccessfulToolResponse(logs, 51);
         assertStructuredOutputConforms(logs, "hop_logs", outputSchemas);
 
         requests.println(
             toolCall(52, "hop_component", "{\"path\":\"valid.hpl\",\"component\":\"Input\"}"));
-        String component = readResponse(reader, responses);
+        String component = responses.readResponse();
         assertSuccessfulToolResponse(component, 52);
         assertStructuredOutputConforms(component, "hop_component", outputSchemas);
 
@@ -366,26 +467,26 @@ class HopMcpServerStdioTest {
                 59,
                 "hop_component",
                 "{\"path\":\"valid.hpl\",\"component\":\"missing-component\"}"));
-        String missingComponent = readResponse(reader, responses);
+        String missingComponent = responses.readResponse();
         assertResponseId(missingComponent, 59);
         assertStructuredOutputConforms(missingComponent, "hop_component", outputSchemas);
 
         requests.println(
             toolCall(13, "hop_component_types", "{\"kind\":\"pipeline\",\"limit\":5}"));
-        String componentTypes = readResponse(reader, responses);
+        String componentTypes = responses.readResponse();
         assertSuccessfulToolResponse(componentTypes, 13);
         assertStructuredOutputConforms(componentTypes, "hop_component_types", outputSchemas);
 
         requests.println(
             toolCall(14, "hop_mutate_definition", "{\"path\":\"valid.hpl\",\"operations\":[]}"));
-        String mutation = readResponse(reader, responses);
+        String mutation = responses.readResponse();
         assertSuccessfulToolResponse(mutation, 14);
         assertStructuredOutputConforms(mutation, "hop_mutate_definition", outputSchemas);
 
         requests.println(
             toolCall(
                 15, "hop_prepare_correction_plan", "{\"path\":\"valid.hpl\",\"operations\":[]}"));
-        String correctionPlan = readResponse(reader, responses);
+        String correctionPlan = responses.readResponse();
         assertSuccessfulToolResponse(correctionPlan, 15);
         assertStructuredOutputConforms(
             correctionPlan, "hop_prepare_correction_plan", outputSchemas);
@@ -397,7 +498,7 @@ class HopMcpServerStdioTest {
         String planSha256 = (String) correctionContent.get("plan_sha256");
         requests.println(
             toolCall(53, "hop_correction_plan_status", "{\"plan_id\":\"" + planId + "\"}"));
-        String correctionStatus = readResponse(reader, responses);
+        String correctionStatus = responses.readResponse();
         assertSuccessfulToolResponse(correctionStatus, 53);
         assertStructuredOutputConforms(
             correctionStatus, "hop_correction_plan_status", outputSchemas);
@@ -407,14 +508,14 @@ class HopMcpServerStdioTest {
                 54,
                 "hop_apply_correction_plan",
                 "{\"plan_id\":\"" + planId + "\",\"plan_sha256\":\"" + planSha256 + "\"}"));
-        String appliedCorrection = readResponse(reader, responses);
+        String appliedCorrection = responses.readResponse();
         assertSuccessfulToolResponse(appliedCorrection, 54);
         assertStructuredOutputConforms(
             appliedCorrection, "hop_apply_correction_plan", outputSchemas);
 
         requests.println(
             toolCall(55, "hop_correction_plan_status", "{\"plan_id\":\"" + planId + "\"}"));
-        String appliedCorrectionStatus = readResponse(reader, responses);
+        String appliedCorrectionStatus = responses.readResponse();
         assertSuccessfulToolResponse(appliedCorrectionStatus, 55);
         assertStructuredOutputConforms(
             appliedCorrectionStatus, "hop_correction_plan_status", outputSchemas);
@@ -431,7 +532,7 @@ class HopMcpServerStdioTest {
                 "{\"path\":\"mutable.hpl\",\"kind\":\"pipeline\",\"expected_sha256\":\""
                     + expectedSha256
                     + "\",\"operations\":[{\"operation\":\"set_description\",\"value\":\"stdio mutation\"}],\"apply\":true}"));
-        String appliedMutation = readResponse(reader, responses);
+        String appliedMutation = responses.readResponse();
         assertSuccessfulToolResponse(appliedMutation, 56);
         assertStructuredOutputConforms(appliedMutation, "hop_mutate_definition", outputSchemas);
         Map<String, Object> mutationContent =
@@ -446,14 +547,14 @@ class HopMcpServerStdioTest {
                     + "\",\"expected_sha256\":\""
                     + mutationContent.get("new_sha256")
                     + "\"}"));
-        String rolledBackMutation = readResponse(reader, responses);
+        String rolledBackMutation = responses.readResponse();
         assertSuccessfulToolResponse(rolledBackMutation, 57);
         assertStructuredOutputConforms(rolledBackMutation, "hop_rollback_mutation", outputSchemas);
 
         requests.println(
             toolCall(
                 16, "hop_component_schema", "{\"kind\":\"pipeline\",\"plugin_id\":\"Injector\"}"));
-        String componentSchema = readResponse(reader, responses);
+        String componentSchema = responses.readResponse();
         assertSuccessfulToolResponse(componentSchema, 16);
         assertStructuredOutputConforms(componentSchema, "hop_component_schema", outputSchemas);
         assertTrue(
@@ -461,7 +562,7 @@ class HopMcpServerStdioTest {
 
         requests.println(
             toolCall(17, "hop_execute", "{\"path\":\"valid.hpl\",\"timeout_seconds\":10}"));
-        String execution = readResponse(reader, responses);
+        String execution = responses.readResponse();
         assertSuccessfulToolResponse(execution, 17);
         assertStructuredOutputConforms(execution, "hop_execute", outputSchemas);
         assertTrue(execution.contains("\\\"ok\\\":true"), execution);
@@ -497,7 +598,7 @@ class HopMcpServerStdioTest {
 
         requests.println(
             toolCall(18, "hop_start_execution", "{\"path\":\"valid.hpl\",\"timeout_seconds\":10}"));
-        String startedExecution = readResponse(reader, responses);
+        String startedExecution = responses.readResponse();
         assertSuccessfulToolResponse(startedExecution, 18);
         assertStructuredOutputConforms(startedExecution, "hop_start_execution", outputSchemas);
         Matcher operationId =
@@ -512,7 +613,7 @@ class HopMcpServerStdioTest {
                   19 + attempt,
                   "hop_execution_status",
                   "{\"operation_id\":\"" + operationId.group(1) + "\"}"));
-          executionStatus = readResponse(reader, responses);
+          executionStatus = responses.readResponse();
           assertSuccessfulToolResponse(executionStatus, 19 + attempt);
           assertStructuredOutputConforms(executionStatus, "hop_execution_status", outputSchemas);
           if (executionStatus.contains("\\\"state\\\":\\\"completed\\\"")) break;
@@ -523,14 +624,14 @@ class HopMcpServerStdioTest {
         requests.println(
             toolCall(
                 58, "hop_stop_execution", "{\"operation_id\":\"" + operationId.group(1) + "\"}"));
-        String stoppedExecution = readResponse(reader, responses);
+        String stoppedExecution = responses.readResponse();
         assertSuccessfulToolResponse(stoppedExecution, 58);
         assertStructuredOutputConforms(stoppedExecution, "hop_stop_execution", outputSchemas);
 
         requests.println(
             toolCall(
                 65, "hop_execution_history", "{\"location\":\"missing-location\",\"limit\":10}"));
-        String executionHistory = readResponse(reader, responses);
+        String executionHistory = responses.readResponse();
         assertResponseId(executionHistory, 65);
         assertTrue(executionHistory.contains("\"isError\":true"), executionHistory);
 
@@ -541,7 +642,7 @@ class HopMcpServerStdioTest {
                 "{\"location\":\"missing-location\",\"execution_id\":\""
                     + operationId.group(1)
                     + "\"}"));
-        String executionDetail = readResponse(reader, responses);
+        String executionDetail = responses.readResponse();
         assertResponseId(executionDetail, 66);
         assertTrue(executionDetail.contains("\"isError\":true"), executionDetail);
 
@@ -552,7 +653,7 @@ class HopMcpServerStdioTest {
                 "{\"location\":\"missing-location\",\"execution_id\":\""
                     + operationId.group(1)
                     + "\"}"));
-        String executionChildren = readResponse(reader, responses);
+        String executionChildren = responses.readResponse();
         assertResponseId(executionChildren, 67);
         assertTrue(executionChildren.contains("\"isError\":true"), executionChildren);
 
@@ -563,31 +664,31 @@ class HopMcpServerStdioTest {
                 "{\"location\":\"missing-location\",\"execution_id\":\""
                     + operationId.group(1)
                     + "\"}"));
-        String executionMetrics = readResponse(reader, responses);
+        String executionMetrics = responses.readResponse();
         assertResponseId(executionMetrics, 68);
         assertTrue(executionMetrics.contains("\"isError\":true"), executionMetrics);
 
         requests.println(toolCall(6, "hop_validate", "{\"path\":42}"));
-        String invalidInput = readResponse(reader, responses);
+        String invalidInput = responses.readResponse();
         assertResponseId(invalidInput, 6);
         assertTrue(invalidInput.contains("\"isError\":true"), invalidInput);
 
         requests.println(toolCall(7, "no_such_tool", "{}"));
-        String unknownTool = readResponse(reader, responses);
+        String unknownTool = responses.readResponse();
         assertResponseId(unknownTool, 7);
         assertTrue(
             unknownTool.contains("\"isError\":true") || unknownTool.contains("\"error\":"),
             unknownTool);
 
         requests.println(toolCall(8, "hop_read_text", "{\"path\":\"missing.txt\"}"));
-        String toolFailure = readResponse(reader, responses);
+        String toolFailure = responses.readResponse();
         assertResponseId(toolFailure, 8);
         assertTrue(toolFailure.contains("\"isError\":true"), toolFailure);
         assertTrue(toolFailure.contains("\\\"category\\\":"), toolFailure);
         assertStructuredOutputConforms(toolFailure, "hop_read_text", outputSchemas);
 
         requests.println(toolCall(9, "hop_validate", "{\"path\":\"valid.hpl\"}"));
-        assertSuccessfulToolResponse(readResponse(reader, responses), 9);
+        assertSuccessfulToolResponse(responses.readResponse(), 9);
         clientOutput.close();
         server.awaitEof();
       }
@@ -603,10 +704,8 @@ class HopMcpServerStdioTest {
         PipedOutputStream clientOutput = new PipedOutputStream(serverInput);
         PipedInputStream clientInput = new PipedInputStream();
         PipedOutputStream serverOutput = new PipedOutputStream(clientInput);
-        BufferedReader responses =
-            new BufferedReader(new InputStreamReader(clientInput, StandardCharsets.UTF_8));
+        ResponsePump responses = new ResponsePump(clientInput, serverOutput);
         PrintWriter requests = new PrintWriter(clientOutput, true, StandardCharsets.UTF_8);
-        ExecutorService reader = Executors.newSingleThreadExecutor();
         HopMcpServer server =
             new HopMcpServer(
                 new HopMcpService(
@@ -618,11 +717,11 @@ class HopMcpServerStdioTest {
                 serverOutput)) {
       requests.println(
           "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-11-25\",\"capabilities\":{},\"clientInfo\":{\"name\":\"stdio-default-gates-test\",\"version\":\"1\"}}}");
-      assertResponseId(readResponse(reader, responses), 1);
+      assertResponseId(responses.readResponse(), 1);
       requests.println(
           "{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\",\"params\":{}}");
       requests.println("{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/list\",\"params\":{}}");
-      String tools = readResponse(reader, responses);
+      String tools = responses.readResponse();
       assertResponseId(tools, 2);
       assertTrue(tools.contains("hop_config"), tools);
       assertTrue(tools.contains("hop_validate"), tools);
@@ -656,10 +755,8 @@ class HopMcpServerStdioTest {
         PipedOutputStream clientOutput = new PipedOutputStream(serverInput);
         PipedInputStream clientInput = new PipedInputStream();
         PipedOutputStream serverOutput = new PipedOutputStream(clientInput);
-        BufferedReader responses =
-            new BufferedReader(new InputStreamReader(clientInput, StandardCharsets.UTF_8));
-        PrintWriter requests = new PrintWriter(clientOutput, true, StandardCharsets.UTF_8);
-        ExecutorService reader = Executors.newSingleThreadExecutor()) {
+        ResponsePump responses = new ResponsePump(clientInput, serverOutput);
+        PrintWriter requests = new PrintWriter(clientOutput, true, StandardCharsets.UTF_8)) {
       requests.println(
           "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-11-25\",\"capabilities\":{},\"clientInfo\":{\"name\":\"startup-race-test\",\"version\":\"1\"}}}");
       requests.println(
@@ -672,8 +769,8 @@ class HopMcpServerStdioTest {
                   new ProjectFiles(project), new Variables(), new MemoryMetadataProvider(), false),
               serverInput,
               serverOutput)) {
-        assertResponseId(readResponse(reader, responses), 1);
-        String toolsResponse = readResponse(reader, responses);
+        assertResponseId(responses.readResponse(), 1);
+        String toolsResponse = responses.readResponse();
         assertResponseId(toolsResponse, 2);
         assertTrue(toolsResponse.contains("hop_config"), toolsResponse);
         assertTrue(toolsResponse.contains("hop_validate"), toolsResponse);
@@ -704,10 +801,8 @@ class HopMcpServerStdioTest {
           PipedOutputStream clientOutput = new PipedOutputStream(serverInput);
           PipedInputStream clientInput = new PipedInputStream();
           PipedOutputStream serverOutput = new PipedOutputStream(clientInput);
-          BufferedReader responses =
-              new BufferedReader(new InputStreamReader(clientInput, StandardCharsets.UTF_8));
+          ResponsePump responses = new ResponsePump(clientInput, serverOutput);
           PrintWriter requests = new PrintWriter(clientOutput, true, StandardCharsets.UTF_8);
-          ExecutorService reader = Executors.newSingleThreadExecutor();
           HopMcpServer server =
               new HopMcpServer(
                   new HopMcpService(
@@ -723,17 +818,17 @@ class HopMcpServerStdioTest {
                   serverOutput)) {
         requests.println(
             "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-11-25\",\"capabilities\":{},\"clientInfo\":{\"name\":\"web-schema-test\",\"version\":\"1\"}}}");
-        assertResponseId(readResponse(reader, responses), 1);
+        assertResponseId(responses.readResponse(), 1);
         requests.println(
             "{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\",\"params\":{}}");
         requests.println("{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/list\",\"params\":{}}");
-        String tools = readResponse(reader, responses);
+        String tools = responses.readResponse();
         assertResponseId(tools, 2);
         Map<String, Map<String, Object>> outputSchemas = extractOutputSchemas(tools);
 
         requests.println(
             toolCall(3, "hop_web_request", "{\"method\":\"GET\",\"path\":\"status\"}"));
-        String webResponse = readResponse(reader, responses);
+        String webResponse = responses.readResponse();
         assertSuccessfulToolResponse(webResponse, 3);
         assertStructuredOutputConforms(webResponse, "hop_web_request", outputSchemas);
         assertFalse(webResponse.contains("web-secret"), webResponse);
@@ -792,12 +887,72 @@ class HopMcpServerStdioTest {
     return (Map<String, Object>) value;
   }
 
-  private static String readResponse(ExecutorService reader, BufferedReader responses)
-      throws Exception {
-    Future<String> response = reader.submit(responses::readLine);
-    String line = response.get(RESPONSE_TIMEOUT_SECONDS, TimeUnit.SECONDS);
-    assertNotNull(line, "MCP server closed STDIO before returning a response");
-    return line;
+  private static final class ResponsePump implements AutoCloseable {
+    private final PipedInputStream input;
+    private final PipedOutputStream output;
+    private final BufferedReader lines;
+    private final ExecutorService reader = Executors.newSingleThreadExecutor();
+    private final int timeoutSeconds;
+    private Future<String> pending;
+
+    private ResponsePump(PipedInputStream input, PipedOutputStream output) {
+      this(input, output, RESPONSE_TIMEOUT_SECONDS);
+    }
+
+    private ResponsePump(PipedInputStream input, PipedOutputStream output, int timeoutSeconds) {
+      this.input = input;
+      this.output = output;
+      this.timeoutSeconds = timeoutSeconds;
+      this.lines = new BufferedReader(new InputStreamReader(input, StandardCharsets.UTF_8));
+    }
+
+    private String readResponse() throws Exception {
+      pending = reader.submit(lines::readLine);
+      try {
+        String line = pending.get(timeoutSeconds, TimeUnit.SECONDS);
+        assertNotNull(line, "MCP server closed STDIO before returning a response");
+        return line;
+      } catch (Exception | AssertionError failure) {
+        pending.cancel(true);
+        try {
+          output.close();
+        } catch (IOException cleanup) {
+          failure.addSuppressed(cleanup);
+        }
+        try {
+          input.close();
+        } catch (IOException cleanup) {
+          failure.addSuppressed(cleanup);
+        }
+        throw failure;
+      } finally {
+        pending = null;
+      }
+    }
+
+    @Override
+    public void close() throws Exception {
+      if (pending != null) pending.cancel(true);
+      IOException failure = null;
+      try {
+        output.close();
+      } catch (IOException exception) {
+        failure = exception;
+      }
+      try {
+        input.close();
+      } catch (IOException exception) {
+        if (failure == null) failure = exception;
+        else failure.addSuppressed(exception);
+      }
+      reader.shutdownNow();
+      if (!reader.awaitTermination(2, TimeUnit.SECONDS)) {
+        IOException exception = new IOException("STDIO response reader did not terminate");
+        if (failure == null) failure = exception;
+        else failure.addSuppressed(exception);
+      }
+      if (failure != null) throw failure;
+    }
   }
 
   private static void assertResponseId(String response, int id) {

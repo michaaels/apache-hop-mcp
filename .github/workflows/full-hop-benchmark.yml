@@ -1,0 +1,87 @@
+name: Full Hop Benchmark
+
+on:
+  workflow_dispatch:
+    inputs:
+      baseline_tag:
+        description: Published stable ancestor tag (blank selects automatically)
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  compare:
+    runs-on: windows-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: '22'
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Select published baseline
+        id: baseline
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASELINE_TAG: ${{ inputs.baseline_tag }}
+        shell: pwsh
+        run: python scripts/ci/select-benchmark-baseline.py --candidate $env:GITHUB_SHA --baseline-tag $env:BASELINE_TAG --output $env:GITHUB_OUTPUT
+      - name: Build candidate ZIP
+        shell: pwsh
+        run: mvn -B clean verify
+      - name: Download isolated Hop runtime and published baseline
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASELINE_TAG: ${{ steps.baseline.outputs.tag }}
+        shell: pwsh
+        run: |
+          $evidence = Join-Path $env:RUNNER_TEMP 'full-hop-benchmark'
+          New-Item -ItemType Directory -Path $evidence | Out-Null
+          $archive = Join-Path $evidence 'apache-hop-client-2.19.0.zip'
+          $checksum = "$archive.sha512"
+          Invoke-WebRequest 'https://downloads.apache.org/hop/2.19.0/apache-hop-client-2.19.0.zip' -OutFile $archive
+          Invoke-WebRequest 'https://downloads.apache.org/hop/2.19.0/apache-hop-client-2.19.0.zip.sha512' -OutFile $checksum
+          $expected = [regex]::Match((Get-Content $checksum -Raw), '[0-9a-fA-F]{128}').Value.ToLowerInvariant()
+          $actual = (Get-FileHash $archive -Algorithm SHA512).Hash.ToLowerInvariant()
+          if ($expected.Length -ne 128 -or $actual -ne $expected) { throw 'Hop archive checksum mismatch' }
+          $runtime = Join-Path $evidence 'runtime'
+          New-Item -ItemType Directory -Path $runtime | Out-Null
+          Expand-Archive $archive -DestinationPath $runtime
+          $baselineVersion = $env:BASELINE_TAG.Substring(1)
+          $baselineZip = Join-Path $evidence "hop-mcp-connector-$baselineVersion.zip"
+          gh release download $env:BASELINE_TAG --pattern "hop-mcp-connector-$baselineVersion.zip" --dir $evidence
+          if (-not (Test-Path $baselineZip)) { throw 'Published baseline ZIP missing' }
+      - name: Run five alternating fresh processes per role
+        env:
+          BASELINE_TAG: ${{ steps.baseline.outputs.tag }}
+          BASELINE_COMMIT: ${{ steps.baseline.outputs.commit }}
+        shell: pwsh
+        run: |
+          $evidence = Join-Path $env:RUNNER_TEMP 'full-hop-benchmark'
+          $candidateVersion = ([xml](Get-Content pom.xml -Raw)).project.version
+          $baselineVersion = $env:BASELINE_TAG.Substring(1)
+          $candidateZip = Join-Path $PWD "target/hop-mcp-connector-$candidateVersion.zip"
+          $baselineZip = Join-Path $evidence "hop-mcp-connector-$baselineVersion.zip"
+          $runtime = Join-Path $evidence 'runtime/hop'
+          $fixture = Join-Path $evidence 'fixture-5000'
+          $output = Join-Path $evidence 'run'
+          python scripts/ci/full-hop-benchmark.py --runtime $runtime --runtime-archive (Join-Path $evidence 'apache-hop-client-2.19.0.zip') --fixture $fixture --generate-fixture --java-home $env:JAVA_HOME --baseline $baselineZip --candidate $candidateZip --baseline-version $baselineVersion --candidate-version $candidateVersion --output $output
+          if ($LASTEXITCODE -ne 0) { throw 'Full-Hop benchmark failed' }
+          "baseline_tag=$env:BASELINE_TAG`nbaseline_commit=$env:BASELINE_COMMIT`ncandidate_commit=$env:GITHUB_SHA" | Set-Content (Join-Path $evidence 'provenance.txt')
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: full-hop-benchmark-${{ github.run_id }}
+          path: ${{ runner.temp }}/full-hop-benchmark

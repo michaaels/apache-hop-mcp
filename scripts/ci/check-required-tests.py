@@ -5,6 +5,8 @@ import xml.etree.ElementTree as ET
 
 REQUIRED = {
     ("ProjectFilesBoundsTest", "walkerDoesNotFollowSymbolicLinks"),
+    ("ProjectFilesBoundsTest", "aliasesCannotExposeExternalOrInternalFiles"),
+    ("ProjectFilesBoundsTest", "explicitResolutionOfOrdinaryInternalAliasRemainsAllowed"),
     ("HopDefinitionMutatorTest", "rejectsSymbolicLinkBackupRoot"),
 }
 

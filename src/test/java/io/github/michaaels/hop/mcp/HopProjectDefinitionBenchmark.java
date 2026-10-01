@@ -15,7 +15,7 @@ import org.apache.hop.core.variables.Variables;
 import org.apache.hop.metadata.api.IHopMetadataProvider;
 import org.apache.hop.metadata.serializer.memory.MemoryMetadataProvider;
 
-/** Same-runner benchmark harness. It uses only APIs present in the 2.2.1 baseline. */
+/** Same-runner benchmark harness. It uses only APIs present in the 2.2.2 baseline. */
 public final class HopProjectDefinitionBenchmark {
   private static final int[] STANDARD_SIZES = {1_000, 2_500, 5_000};
   private static final int WARM_RUNS = 5;
@@ -47,16 +47,11 @@ public final class HopProjectDefinitionBenchmark {
       rows.addAll(benchmarkStandardProject(project, size));
     }
 
-    boolean currentRun = mode.equals("current");
     Path mixed = mixedProject(fixtureRoot, 20_000, 5_000);
-    rows.add(
-        benchmarkBoundedScenario(
-            mixed, "mixed-20k-files-5k-definitions", 20_000, 5_000, currentRun));
+    rows.add(benchmarkBoundedScenario(mixed, "mixed-20k-files-5k-definitions", 20_000, 5_000));
     for (int size : new int[] {10_000, 20_000}) {
       Path project = definitionsOnlyProject(fixtureRoot, "available-definitions-" + size, size);
-      rows.add(
-          benchmarkBoundedScenario(
-              project, "available-definitions-" + size, size, 5_000, currentRun));
+      rows.add(benchmarkBoundedScenario(project, "available-definitions-" + size, size, 5_000));
     }
 
     Files.createDirectories(output.getParent());
@@ -157,12 +152,7 @@ public final class HopProjectDefinitionBenchmark {
   }
 
   private static Row benchmarkBoundedScenario(
-      Path project,
-      String scenario,
-      int filesAvailable,
-      int expectedCurrentDefinitions,
-      boolean currentRun)
-      throws Exception {
+      Path project, String scenario, int filesAvailable, int expectedDefinitions) throws Exception {
     ProjectFiles files = new ProjectFiles(project);
     HopProjectDefinitionIndex index = newIndex(files);
     Long beforeRefreshes = refreshCount(index);
@@ -170,23 +160,16 @@ public final class HopProjectDefinitionBenchmark {
     HopProjectDefinitionIndex.Snapshot snapshot = index.snapshot();
     long duration = System.nanoTime() - started;
     Long afterRefreshes = refreshCount(index);
-    assertDefinitionPaths(project, snapshot, scenario.startsWith("mixed-") && currentRun);
+    assertDefinitionPaths(project, snapshot, scenario.startsWith("mixed-"));
 
     if (scenario.startsWith("mixed-")) {
-      if (currentRun) {
-        if (snapshot.definitions().size() != expectedCurrentDefinitions
-            || snapshot.truncated()
-            || filesExamined(snapshot, files) != filesAvailable) {
-          throw new AssertionError(
-              "current mixed-project scan must index all definitions without truncation");
-        }
-      } else if (snapshot.definitions().size() > 5_000
-          || !snapshot.truncated()
-          || filesExamined(snapshot, files) > ProjectFiles.MAX_SCAN_FILES) {
-        throw new AssertionError("legacy mixed-project scan must report its regular-file bound");
+      if (snapshot.definitions().size() != expectedDefinitions
+          || snapshot.truncated()
+          || filesExamined(snapshot, files) != filesAvailable) {
+        throw new AssertionError(
+            "mixed-project scan must index all definitions without truncation");
       }
-    } else if (snapshot.definitions().size() != expectedCurrentDefinitions
-        || !snapshot.truncated()) {
+    } else if (snapshot.definitions().size() != expectedDefinitions || !snapshot.truncated()) {
       throw new AssertionError("definition result limit must be reported as truncated");
     }
 

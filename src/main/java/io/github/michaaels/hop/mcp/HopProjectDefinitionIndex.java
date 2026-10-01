@@ -117,7 +117,7 @@ final class HopProjectDefinitionIndex {
 
   HopProjectDefinitionIndex(
       ProjectFiles files, HopMetadataReferenceExtractor metadataReferenceExtractor) {
-    this(files, metadataReferenceExtractor, files::definitionScan, files::readBytes);
+    this(files, metadataReferenceExtractor, files::definitionScan, files::readProjectBytes);
   }
 
   HopProjectDefinitionIndex(

@@ -24,7 +24,7 @@ Optional Hop Web access is read-only: only GET and HEAD are accepted. Requests s
 
 The native deep checker is disabled by default because some plugins may resolve fields or contact configured external systems during checking.
 
-The MCP SDK and server declare protocol revision `2025-11-25` over STDIO. This server advertises tools only; it does not implement prompts, resources, completion, sampling, elicitation, or SSE. The official Conformance Suite is not wired into CI, and no conformance pass is claimed. The 2.20.0-SNAPSHOT compatibility profile is separate from the 2.19.0 stable compile baseline.
+The MCP SDK and server declare protocol revision `2025-11-25` over STDIO. This server advertises tools only; it does not implement prompts, resources, completion, sampling, elicitation, or SSE. The official Conformance Suite is wired into CI with an explicit expected-failure baseline; no complete conformance pass is claimed. The 2.20.0-SNAPSHOT compatibility profile is separate from the 2.19.0 stable compile baseline.
 
 ## Reporting
 

@@ -474,9 +474,7 @@ final class HopDefinitionMutator {
           throw new IOException("Mutation backup storage scan limit reached");
         }
         String id = directory.getFileName().toString();
-        if (!isTransactionId(id)
-            || Files.isSymbolicLink(directory)
-            || !Files.isDirectory(directory, LinkOption.NOFOLLOW_LINKS)) {
+        if (!isTransactionId(id) || !isSafeDirectory(directory)) {
           throw new IOException("Mutation backup storage contains malformed state");
         }
         Path backup = directory.resolve(BACKUP_FILE_NAME);
@@ -557,10 +555,18 @@ final class HopDefinitionMutator {
   }
 
   private static void requireSafeDirectory(Path directory) throws IOException {
-    if (Files.isSymbolicLink(directory)
-        || !Files.isDirectory(directory, LinkOption.NOFOLLOW_LINKS)) {
+    if (!isSafeDirectory(directory)) {
       throw new IOException("Mutation backup storage path is not a safe directory");
     }
+  }
+
+  private static boolean isSafeDirectory(Path directory) throws IOException {
+    var attrs =
+        Files.readAttributes(
+            directory,
+            java.nio.file.attribute.BasicFileAttributes.class,
+            LinkOption.NOFOLLOW_LINKS);
+    return attrs.isDirectory() && !attrs.isSymbolicLink() && !attrs.isOther();
   }
 
   private boolean isSafeBackupFile(String transactionId, Path backup) throws IOException {
@@ -568,8 +574,7 @@ final class HopDefinitionMutator {
     Path root = backupRootIfPresent();
     if (root == null) return false;
     Path directory = root.resolve(transactionId);
-    return !Files.isSymbolicLink(directory)
-        && Files.isDirectory(directory, LinkOption.NOFOLLOW_LINKS)
+    return isSafeDirectory(directory)
         && backup.equals(directory.resolve(BACKUP_FILE_NAME))
         && !Files.isSymbolicLink(backup)
         && Files.isRegularFile(backup, LinkOption.NOFOLLOW_LINKS);
@@ -581,8 +586,7 @@ final class HopDefinitionMutator {
     if (root == null) return;
     Path directory = root.resolve(transactionId);
     if (!Files.exists(directory, LinkOption.NOFOLLOW_LINKS)) return;
-    if (Files.isSymbolicLink(directory)
-        || !Files.isDirectory(directory, LinkOption.NOFOLLOW_LINKS)) {
+    if (!isSafeDirectory(directory)) {
       throw new IOException("Mutation backup transaction directory is unsafe");
     }
     List<Path> childrenToDelete = new ArrayList<>();

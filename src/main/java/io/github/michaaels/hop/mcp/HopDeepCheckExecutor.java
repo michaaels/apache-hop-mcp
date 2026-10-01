@@ -25,6 +25,7 @@ final class HopDeepCheckExecutor {
   private static final AtomicLong REJECTED = new AtomicLong();
   private static final AtomicLong SUBMITTED = new AtomicLong();
   private static final AtomicReference<TrackedTask<?>> DEGRADED_TASK = new AtomicReference<>();
+  private static final Object HEALTH_LOCK = new Object();
 
   private static final ThreadPoolExecutor EXECUTOR =
       new ThreadPoolExecutor(
@@ -45,16 +46,26 @@ final class HopDeepCheckExecutor {
   static <T> Future<T> submit(Callable<T> task) throws McpException {
     Objects.requireNonNull(task, "task");
     TrackedTask<T> tracked = new TrackedTask<>(task);
-    try {
-      EXECUTOR.execute(tracked);
-      SUBMITTED.incrementAndGet();
-      return tracked;
-    } catch (RejectedExecutionException busy) {
-      REJECTED.incrementAndGet();
-      throw McpException.precondition(
-          "DEEP_CHECK_BUSY",
-          "The bounded deep-check worker is busy. Retry after an active external check completes.",
-          true);
+    synchronized (HEALTH_LOCK) {
+      TrackedTask<?> degraded = DEGRADED_TASK.get();
+      if (degraded != null && !degraded.state.finished.get()) {
+        REJECTED.incrementAndGet();
+        throw McpException.precondition(
+            "DEEP_CHECK_WORKER_UNHEALTHY",
+            "The deep-check worker is recovering. Retry after the active check finishes.",
+            true);
+      }
+      try {
+        EXECUTOR.execute(tracked);
+        SUBMITTED.incrementAndGet();
+        return tracked;
+      } catch (RejectedExecutionException busy) {
+        REJECTED.incrementAndGet();
+        throw McpException.precondition(
+            "DEEP_CHECK_BUSY",
+            "The bounded deep-check worker is busy. Retry after an active external check completes.",
+            true);
+      }
     }
   }
 
@@ -65,24 +76,20 @@ final class HopDeepCheckExecutor {
       return;
     }
 
-    if (timedOut && tracked.timeoutCounted.compareAndSet(false, true)) TIMEOUTS.incrementAndGet();
-    if (!tracked.cancel(true)) return;
-    CANCELLED.incrementAndGet();
-    if (EXECUTOR.remove(tracked)) return;
-
-    if (tracked.state.running.get() && !tracked.state.finished.get()) {
-      DEGRADED_TASK.set(tracked);
-      if (tracked.state.finished.get()) DEGRADED_TASK.compareAndSet(tracked, null);
+    synchronized (HEALTH_LOCK) {
+      if (!tracked.cancel(true)) return;
+      if (timedOut && tracked.timeoutCounted.compareAndSet(false, true)) TIMEOUTS.incrementAndGet();
+      CANCELLED.incrementAndGet();
+      if (EXECUTOR.remove(tracked)) return;
+      if (tracked.state.running.get() && !tracked.state.finished.get()) {
+        DEGRADED_TASK.set(tracked);
+      }
     }
   }
 
   static Map<String, Object> metrics() {
     Map<String, Object> result = new LinkedHashMap<>();
     TrackedTask<?> degraded = DEGRADED_TASK.get();
-    if (degraded != null && degraded.state.finished.get()) {
-      DEGRADED_TASK.compareAndSet(degraded, null);
-      degraded = DEGRADED_TASK.get();
-    }
     result.put("active", ACTIVE.get());
     result.put("queued", EXECUTOR.getQueue().size());
     result.put("completed", COMPLETED.get());
@@ -95,19 +102,23 @@ final class HopDeepCheckExecutor {
   }
 
   private static <T> T invoke(TaskState state, Callable<T> task) throws Exception {
-    state.running.set(true);
-    TrackedTask<?> runningTask = state.owner.get();
-    if (runningTask != null && runningTask.isCancelled()) DEGRADED_TASK.set(runningTask);
-    ACTIVE.incrementAndGet();
+    synchronized (HEALTH_LOCK) {
+      state.running.set(true);
+      TrackedTask<?> runningTask = state.owner.get();
+      if (runningTask != null && runningTask.isCancelled()) DEGRADED_TASK.set(runningTask);
+      ACTIVE.incrementAndGet();
+    }
     try {
       return task.call();
     } finally {
-      state.finished.set(true);
-      state.running.set(false);
-      ACTIVE.decrementAndGet();
-      COMPLETED.incrementAndGet();
-      TrackedTask<?> owner = state.owner.get();
-      if (owner != null) DEGRADED_TASK.compareAndSet(owner, null);
+      synchronized (HEALTH_LOCK) {
+        state.finished.set(true);
+        state.running.set(false);
+        ACTIVE.decrementAndGet();
+        COMPLETED.incrementAndGet();
+        TrackedTask<?> owner = state.owner.get();
+        if (owner != null) DEGRADED_TASK.compareAndSet(owner, null);
+      }
     }
   }
 

@@ -5,6 +5,9 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import java.util.Map;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import org.apache.hop.core.database.DatabaseTestResults;
 import org.apache.hop.core.variables.Variables;
@@ -55,5 +58,47 @@ class HopConnectionServiceTest {
     assertThrows(
         IllegalArgumentException.class,
         () -> service.testConnection("DWH_PROD", HopConnectionService.MAX_TIMEOUT_SECONDS + 1));
+  }
+
+  @Test
+  void degradedWorkerPropagatesTypedRetryableErrorWithoutRunningProbe() throws Exception {
+    CountDownLatch started = new CountDownLatch(1);
+    CountDownLatch release = new CountDownLatch(1);
+    Future<?> stuck =
+        HopDeepCheckExecutor.submit(
+            () -> {
+              started.countDown();
+              while (release.getCount() > 0) {
+                try {
+                  release.await();
+                } catch (InterruptedException ignored) {
+                  /* simulate JDBC */
+                }
+              }
+              return null;
+            });
+    try {
+      assertEquals(true, started.await(5, TimeUnit.SECONDS));
+      HopDeepCheckExecutor.cancel(stuck, true);
+      HopConnectionService service =
+          new HopConnectionService(
+              null,
+              new Variables(),
+              true,
+              (database, variables) -> {
+                throw new AssertionError("probe must not run");
+              },
+              name -> null);
+      McpException error =
+          assertThrows(McpException.class, () -> service.testConnection("DWH_PROD", 1));
+      assertEquals("DEEP_CHECK_WORKER_UNHEALTHY", error.code());
+      assertEquals("PRECONDITION_FAILED", error.category());
+      assertEquals(true, error.retryable());
+    } finally {
+      release.countDown();
+      long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+      while ("DEGRADED".equals(HopDeepCheckExecutor.metrics().get("health"))
+          && System.nanoTime() < deadline) Thread.sleep(10);
+    }
   }
 }

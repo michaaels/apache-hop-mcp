@@ -198,6 +198,22 @@ class HopWebClientTest {
   }
 
   @Test
+  void requestPreservesRawQueryExactlyOnce() throws Exception {
+    HopWebClient client = new HopWebClient(baseUrl(), null, null, null, 5);
+    String raw = "name=A%20B&literal=%26&plus=%2B&unicode=%C3%A9&empty=&repeat=1&repeat=2";
+    Map<String, Object> result = client.request("GET", "/status?" + raw, Map.of());
+    assertEquals("/hop/status?" + raw, requestPath.get());
+    assertFalse(String.valueOf(result.get("url")).contains(raw));
+    assertEquals(true, result.get("query_present"));
+
+    client.request("GET", "/status", Map.of());
+    assertEquals("/hop/status", requestPath.get());
+    Map<String, Object> emptyQuery = client.request("GET", "/status?", Map.of());
+    assertEquals("/hop/status", requestPath.get());
+    assertEquals(true, emptyQuery.get("query_present"));
+  }
+
+  @Test
   void requestRejectsTraversalAbsoluteUrlsAndMutatingMethods() {
     HopWebClient client = new HopWebClient(baseUrl(), null, null, null, 5);
 

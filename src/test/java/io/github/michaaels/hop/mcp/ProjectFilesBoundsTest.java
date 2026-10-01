@@ -9,6 +9,7 @@ import java.nio.file.attribute.BasicFileAttributes;
 import java.nio.file.attribute.FileTime;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
@@ -242,6 +243,117 @@ class ProjectFilesBoundsTest {
         assertThrows(
             McpException.class, () -> files.resolveForWrite(".hop-mcp/backups/hidden.txt"));
     assertEquals("INTERNAL_PATH_DENIED", internalWrite.code());
+  }
+
+  @Test
+  void aliasesCannotExposeExternalOrInternalFiles() throws Exception {
+    Path root = Files.createDirectory(temp.resolve("aliases"));
+    Path outside = Files.createDirectory(temp.resolve("external"));
+    write(outside, "outside.hpl", "external-marker");
+    write(root, ".hop-mcp/backups/hidden.hpl", "protected-marker");
+    ProjectFiles files = new ProjectFiles(root);
+    Path externalLink = root.resolve("external-link");
+    Path internalLink = root.resolve("internal-link");
+    try {
+      Files.createSymbolicLink(externalLink, outside);
+      Files.createSymbolicLink(internalLink, root.resolve(".hop-mcp"));
+    } catch (IOException | UnsupportedOperationException | SecurityException e) {
+      Files.deleteIfExists(externalLink);
+      Assumptions.assumeTrue(false, "symbolic links are unavailable in this environment");
+      return;
+    }
+    try {
+      assertEquals(List.of(), paths(files.catalog("**", 0, 20), "files"));
+      assertEquals(List.of(), paths(files.definitionsPage(0, 20), "definitions"));
+      assertEquals(0, files.search("marker", "**", 0, 20).get("count"));
+      assertThrows(McpException.class, () -> files.resolve("external-link/outside.hpl"));
+      McpException denied =
+          assertThrows(McpException.class, () -> files.resolve("internal-link/backups/hidden.hpl"));
+      assertEquals("INTERNAL_PATH_DENIED", denied.code());
+      assertThrows(
+          McpException.class,
+          () -> files.readTextChunk("internal-link/backups/hidden.hpl", 0, 1024));
+      assertThrows(IOException.class, () -> files.resolveForWrite("internal-link/backups/new.hpl"));
+      assertThrows(
+          IOException.class, () -> files.resolveForWrite("internal-link/backups/hidden.hpl"));
+    } finally {
+      Files.delete(internalLink);
+      Files.delete(externalLink);
+    }
+  }
+
+  @Test
+  void windowsJunctionsAreExcludedAndCannotExposeBackups() throws Exception {
+    Assumptions.assumeTrue(System.getProperty("os.name").toLowerCase(Locale.ROOT).contains("win"));
+    Path root = Files.createDirectory(temp.resolve("junction-project"));
+    Path outside = Files.createDirectory(temp.resolve("junction-external"));
+    write(outside, "outside.hpl", "external-junction-marker");
+    write(root, ".hop-mcp/backups/hidden.hpl", "protected-junction-marker");
+    Path external = root.resolve("external-junction");
+    Path internal = root.resolve("internal-junction");
+    createJunction(external, outside);
+    try {
+      createJunction(internal, root.resolve(".hop-mcp"));
+      try {
+        ProjectFiles files = new ProjectFiles(root);
+        assertTrue(files.definitionScan(20).files().isEmpty());
+        assertTrue(paths(files.catalog("**", 0, 20), "files").isEmpty());
+        assertEquals(0, files.search("junction-marker", "**", 0, 20).get("count"));
+        assertThrows(McpException.class, () -> files.resolve("external-junction/outside.hpl"));
+        assertEquals(
+            "INTERNAL_PATH_DENIED",
+            assertThrows(
+                    McpException.class, () -> files.resolve("internal-junction/backups/hidden.hpl"))
+                .code());
+        assertThrows(
+            McpException.class,
+            () -> files.readTextChunk("internal-junction/backups/hidden.hpl", 0, 1024));
+        assertEquals(
+            "INTERNAL_PATH_DENIED",
+            assertThrows(
+                    McpException.class,
+                    () -> files.resolveForWrite("internal-junction/backups/new.hpl"))
+                .code());
+      } finally {
+        Files.delete(internal);
+      }
+    } finally {
+      Files.delete(external);
+    }
+  }
+
+  @Test
+  void explicitResolutionOfOrdinaryInternalAliasRemainsAllowed() throws Exception {
+    Path root = Files.createDirectory(temp.resolve("allowed-project"));
+    Path destination = Files.createDirectory(root.resolve("ordinary"));
+    Path original = write(root, "ordinary/data.txt", "ordinary-data");
+    Path alias = root.resolve("alias");
+    boolean windows = System.getProperty("os.name").toLowerCase(Locale.ROOT).contains("win");
+    if (windows) {
+      createJunction(alias, destination);
+    } else {
+      Files.createSymbolicLink(alias, destination);
+    }
+    try {
+      ProjectFiles files = new ProjectFiles(root);
+      assertEquals(original.toRealPath(), files.resolve("alias/data.txt"));
+      assertEquals("ordinary-data", files.readText("alias/data.txt"));
+      assertEquals(List.of("ordinary/data.txt"), paths(files.catalog("**", 0, 20), "files"));
+      if (windows) {
+        assertEquals(destination.resolve("new.txt"), files.resolveForWrite("alias/new.txt"));
+      }
+    } finally {
+      Files.delete(alias);
+    }
+  }
+
+  private static void createJunction(Path link, Path target) throws Exception {
+    Process process =
+        new ProcessBuilder("cmd", "/c", "mklink", "/J", link.toString(), target.toString())
+            .redirectErrorStream(true)
+            .start();
+    String output = new String(process.getInputStream().readAllBytes());
+    assertEquals(0, process.waitFor(), output);
   }
 
   private static Path write(Path root, String relative, String content) throws IOException {

@@ -19,6 +19,7 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     outputs:
       version: ${{ steps.maven.outputs.version }}
       artifact: ${{ steps.maven.outputs.artifact }}
@@ -79,10 +80,8 @@ jobs:
             target/bom.xml
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: hop-native-acceptance-classes
-          path: |
-            target/classes/
-            target/test-classes/
+          name: hop-native-acceptance-helpers
+          path: target/${{ steps.maven.outputs.artifact }}-${{ steps.maven.outputs.version }}-tests.jar
 
   mcp-conformance-2025-11-25:
     needs: build
@@ -218,11 +217,21 @@ jobs:
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/hop-acceptance"
           export HOP_CONFIG_FOLDER="$RUNNER_TEMP/hop-config"
-          CLASSES="$GITHUB_WORKSPACE/artifacts/hop-native-acceptance-classes"
-          CLASSPATH="$CLASSES/classes:$CLASSES/test-classes:$RUNNER_TEMP/hop-runtime/hop/lib/core/*:$RUNNER_TEMP/hop-runtime/hop/lib/swt/linux/x86_64/*"
+          ARTIFACT="${{ needs.build.outputs.artifact }}"
+          VERSION="${{ needs.build.outputs.version }}"
+          INSTALLED="$RUNNER_TEMP/hop-runtime/hop/plugins/misc/$ARTIFACT/$ARTIFACT-$VERSION.jar"
+          HELPERS="$GITHUB_WORKSPACE/artifacts/hop-native-acceptance-helpers/$ARTIFACT-$VERSION-tests.jar"
+          ZIP_PATH=$(find "$GITHUB_WORKSPACE/artifacts" -name "$ARTIFACT-$VERSION.zip" -print -quit)
+          test -f "$INSTALLED" && test -f "$HELPERS" && test -f "$ZIP_PATH"
+          unzip -p "$ZIP_PATH" "plugins/misc/$ARTIFACT/$ARTIFACT-$VERSION.jar" | sha256sum | awk '{print $1}' > "$RUNNER_TEMP/hop-acceptance/expected-jar.sha256"
+          sha256sum "$INSTALLED" | awk '{print $1}' > "$RUNNER_TEMP/hop-acceptance/installed-jar.sha256"
+          cmp "$RUNNER_TEMP/hop-acceptance/expected-jar.sha256" "$RUNNER_TEMP/hop-acceptance/installed-jar.sha256"
+          sha256sum "$ZIP_PATH" > "$RUNNER_TEMP/hop-acceptance/zip.sha256"
+          printf 'version=%s\njar=%s\n' "$VERSION" "$INSTALLED" > "$RUNNER_TEMP/hop-acceptance/artifact.txt"
+          CLASSPATH="$HELPERS:$INSTALLED:$RUNNER_TEMP/hop-runtime/hop/plugins/misc/$ARTIFACT/lib/*:$RUNNER_TEMP/hop-runtime/hop/lib/core/*:$RUNNER_TEMP/hop-runtime/hop/lib/swt/linux/x86_64/*"
           cd "$RUNNER_TEMP/hop-runtime/hop"
           java -cp "$CLASSPATH" io.github.michaaels.hop.mcp.HopNativeReferenceAcceptance \
-            "$RUNNER_TEMP/hop-acceptance/references" | tee "$RUNNER_TEMP/hop-acceptance/references.log"
+            "$RUNNER_TEMP/hop-acceptance/references" "$INSTALLED" | tee "$RUNNER_TEMP/hop-acceptance/references.log"
           java -cp "$CLASSPATH" io.github.michaaels.hop.mcp.HopOperationalFixture \
             "$RUNNER_TEMP/hop-acceptance/project"
           cd "$GITHUB_WORKSPACE"
@@ -249,3 +258,27 @@ jobs:
         run: mvn -B -P hop-2.20 clean verify
       - name: Require real Linux symlink security coverage
         run: python3 scripts/ci/check-required-tests.py target/surefire-reports
+
+  windows-junction-security:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+      - name: Verify on Windows
+        run: mvn -B clean verify
+      - name: Require Windows junction tests
+        if: always()
+        run: python scripts/ci/check-windows-junction-tests.py target/surefire-reports
+      - name: Upload Windows test diagnostics
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: windows-junction-security-reports
+          path: target/surefire-reports/

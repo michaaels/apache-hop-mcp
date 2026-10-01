@@ -27,13 +27,23 @@ class HopDeepCheckExecutorTest {
     try {
       assertTrue(started.await(5, TimeUnit.SECONDS));
       long completedBefore = number(HopDeepCheckExecutor.metrics(), "completed");
+      long submittedBefore = number(HopDeepCheckExecutor.metrics(), "submitted");
+      long rejectedBefore = number(HopDeepCheckExecutor.metrics(), "rejected");
       HopDeepCheckExecutor.cancel(stuck, true);
       assertEquals("DEGRADED", HopDeepCheckExecutor.metrics().get("health"));
 
-      Future<String> queued = HopDeepCheckExecutor.submit(() -> "after-stuck-work");
-      assertEquals(1L, number(HopDeepCheckExecutor.metrics(), "queued"));
+      McpException unhealthy =
+          assertThrows(McpException.class, () -> HopDeepCheckExecutor.submit(() -> "must-not-run"));
+      assertEquals("DEEP_CHECK_WORKER_UNHEALTHY", unhealthy.code());
+      assertEquals(0L, number(HopDeepCheckExecutor.metrics(), "queued"));
+      assertEquals(submittedBefore, number(HopDeepCheckExecutor.metrics(), "submitted"));
+      assertEquals(rejectedBefore + 1, number(HopDeepCheckExecutor.metrics(), "rejected"));
       release.countDown();
-      assertEquals("after-stuck-work", queued.get(5, TimeUnit.SECONDS));
+      long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+      while (!"HEALTHY".equals(HopDeepCheckExecutor.metrics().get("health"))
+          && System.nanoTime() < deadline) Thread.sleep(10);
+      Future<String> recoveredTask = HopDeepCheckExecutor.submit(() -> "after-stuck-work");
+      assertEquals("after-stuck-work", recoveredTask.get(5, TimeUnit.SECONDS));
 
       Map<String, Object> recovered = HopDeepCheckExecutor.metrics();
       assertEquals("HEALTHY", recovered.get("health"));

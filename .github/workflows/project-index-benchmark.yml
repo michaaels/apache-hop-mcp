@@ -2,6 +2,11 @@ name: Project Definition Index Benchmark
 
 on:
   workflow_dispatch:
+    inputs:
+      baseline_tag:
+        description: Published stable ancestor tag (blank selects automatically)
+        required: false
+        type: string
   schedule:
     - cron: '19 5 * * 1'
 
@@ -26,13 +31,22 @@ jobs:
           cache: maven
       - name: Verify index concurrency and bounded scan correctness
         run: mvn -B '-Dtest=HopProjectDefinitionIndexTest,ProjectFilesBoundsTest' test
-      - name: Benchmark v2.2.1 on shared fixtures
+      - name: Select published baseline
+        id: baseline
+        env:
+          BASELINE_TAG: ${{ inputs.baseline_tag }}
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/ci/select-benchmark-baseline.py --candidate "$GITHUB_SHA" --baseline-tag "$BASELINE_TAG" --output "$GITHUB_OUTPUT"
+      - name: Benchmark published baseline on shared fixtures
         shell: bash
+        env:
+          BASELINE_TAG: ${{ steps.baseline.outputs.tag }}
+          BASELINE_COMMIT: ${{ steps.baseline.outputs.commit }}
         run: |
           set -euo pipefail
-          BASELINE_DIR="$RUNNER_TEMP/hop-mcp-v2.2.1"
+          BASELINE_DIR="$RUNNER_TEMP/hop-mcp-baseline"
           FIXTURES="$RUNNER_TEMP/hop-project-index-fixtures"
-          git worktree add --detach "$BASELINE_DIR" refs/tags/v2.2.1
+          git worktree add --detach "$BASELINE_DIR" "$BASELINE_COMMIT"
           mkdir -p "$BASELINE_DIR/src/test/java/io/github/michaaels/hop/mcp"
           cp src/test/java/io/github/michaaels/hop/mcp/HopProjectDefinitionBenchmark.java \
             "$BASELINE_DIR/src/test/java/io/github/michaaels/hop/mcp/HopProjectDefinitionBenchmark.java"
@@ -54,11 +68,14 @@ jobs:
             "-Dexec.args=$FIXTURES $RUNNER_TEMP/benchmark-current.json current" \
             exec:java
       - name: Validate results and write comparison summary
+        env:
+          BASELINE_TAG: ${{ steps.baseline.outputs.tag }}
+          BASELINE_COMMIT: ${{ steps.baseline.outputs.commit }}
         run: |
           python3 scripts/ci/compare-project-index-benchmarks.py \
             --baseline "$RUNNER_TEMP/benchmark-baseline.json" \
             --current "$RUNNER_TEMP/benchmark-current.json" \
-            --baseline-ref v2.2.1 \
+            --baseline-ref "$BASELINE_TAG@$BASELINE_COMMIT" \
             --current-ref "$GITHUB_SHA" \
             --json benchmark.json \
             --csv benchmark.csv \

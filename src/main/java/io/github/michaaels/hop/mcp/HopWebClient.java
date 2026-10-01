@@ -194,20 +194,22 @@ final class HopWebClient {
     URI normalized;
     try {
       normalized =
-          new URI(
-                  baseUri.getScheme(),
-                  baseUri.getRawAuthority(),
-                  joined,
-                  requested.getRawQuery(),
-                  null)
-              .normalize();
+          new URI(baseUri.getScheme(), baseUri.getRawAuthority(), joined, null, null).normalize();
     } catch (Exception e) {
       throw new IllegalArgumentException("REST path is not a valid URI", e);
     }
     if (!isInsideBasePath(normalized.getPath(), basePath)) {
       throw new IllegalArgumentException("REST path escapes the configured Hop Web base path");
     }
-    return normalized;
+    String rawQuery = requested.getRawQuery();
+    URI resolved =
+        rawQuery == null ? normalized : URI.create(normalized.toASCIIString() + "?" + rawQuery);
+    if (!resolved.getScheme().equals(baseUri.getScheme())
+        || !resolved.getRawAuthority().equals(baseUri.getRawAuthority())
+        || !isInsideBasePath(resolved.getPath(), basePath)) {
+      throw new IllegalArgumentException("REST path escapes the configured Hop Web base path");
+    }
+    return resolved;
   }
 
   private static URI normalizeBaseUri(String baseUrl) {

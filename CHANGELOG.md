@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.2.4 - 2026-10-01
+
+- Accepted repeatable informational conformance events without relaxing required checks, and preserved existing benchmark evidence when an output directory is rejected.
+- Confined project reads and semantic writes against resolved paths and excluded Windows junctions from scans and protected backup directories.
+- Made the shared deep-check worker reject new tasks while a cancelled JDBC callable is still running, then recover after its real exit.
+- Strengthened installed-JAR native acceptance, conformance report checks, STDIO timeout cleanup, and Hop Web raw-query handling.
+- Replaced the fixed benchmark baseline with a published stable ancestor selector and added a manual Windows full-Hop workflow with role-specific evidence.
+
 ## 2.2.3 - 2026-09-29
 
 - Reduced initial native extraction work and repeated scan ordering costs without changing typed references, immutable snapshots, invalidation or filesystem change detection. Full-Hop fixture medians improved from 4,236.7 to 3,754.0 ms for first impact queries and from 125.5 to 19.5 ms for hot queries; startup improvement is not claimed.

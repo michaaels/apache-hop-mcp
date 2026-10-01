@@ -42,24 +42,22 @@ def require(condition: bool, message: str) -> None:
 
 def validate_run(run: dict[str, Any], mode: str) -> None:
     rows = run["rows_by_key"]
-    current = mode == "current"
     for size in (1_000, 2_500, 5_000):
         for phase in ("cold", "warm_median_x5", "one_file_changed"):
             row = rows[(f"definitions-{size}", phase)]
             require(row["definitions"] == size, f"{mode} {size}/{phase}: wrong definition count")
             require(row["truncated"] is False, f"{mode} {size}/{phase}: unexpected truncation")
             require(row["files_available"] == size, f"{mode} {size}/{phase}: wrong fixture size")
-            if current:
-                require(
+            require(
                     row["files_examined"] == size,
                     f"{mode} {size}/{phase}: wrong regular-file examination count",
                 )
-                expected_refreshes = {
+            expected_refreshes = {
                     "cold": 1,
                     "warm_median_x5": 5,
                     "one_file_changed": 1,
                 }[phase]
-                require(
+            require(
                     row["refreshes"] == expected_refreshes,
                     f"{mode} {size}/{phase}: unexpected refresh counter",
                 )
@@ -79,14 +77,9 @@ def validate_run(run: dict[str, Any], mode: str) -> None:
 
     mixed = rows[("mixed-20k-files-5k-definitions", "cold_bounds")]
     require(mixed["files_available"] == 20_000, f"{mode}: wrong mixed fixture size")
-    if current:
-        require(mixed["definitions"] == 5_000, "current mixed scan omitted definitions")
-        require(mixed["files_examined"] == 20_000, "current mixed scan did not examine all files")
-        require(mixed["truncated"] is False, "current mixed scan truncated below project bounds")
-    else:
-        require(mixed["definitions"] <= 5_000, "baseline exceeded its historical scan bound")
-        require(mixed["files_examined"] <= 5_000, "baseline exceeded its historical scan bound")
-        require(mixed["truncated"] is True, "baseline failed to report its historical scan bound")
+    require(mixed["definitions"] == 5_000, f"{mode} mixed scan omitted definitions")
+    require(mixed["files_examined"] == 20_000, f"{mode} mixed scan did not examine all files")
+    require(mixed["truncated"] is False, f"{mode} mixed scan truncated below project bounds")
 
     for size in (10_000, 20_000):
         row = rows[(f"available-definitions-{size}", "cold_bounds")]
@@ -94,8 +87,7 @@ def validate_run(run: dict[str, Any], mode: str) -> None:
         require(row["definitions"] == 5_000, f"{mode} {size}: definition page limit mismatch")
         require(row["truncated"] is True, f"{mode} {size}: missing truncation signal")
         require(row["files_examined"] <= size, f"{mode} {size}: examined more files than available")
-        if current:
-            require(row["files_examined"] == size, f"{mode} {size}: failed to examine all available files")
+        require(row["files_examined"] == size, f"{mode} {size}: failed to examine all available files")
 
 
 def number(value: Any) -> str:

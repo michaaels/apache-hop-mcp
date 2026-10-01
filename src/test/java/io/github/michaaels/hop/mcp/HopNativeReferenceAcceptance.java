@@ -31,7 +31,11 @@ public final class HopNativeReferenceAcceptance {
   private HopNativeReferenceAcceptance() {}
 
   public static void main(String[] args) throws Exception {
-    if (args.length != 1) throw new IllegalArgumentException("Expected a new fixture directory");
+    if (args.length != 2)
+      throw new IllegalArgumentException("Expected fixture directory and installed connector JAR");
+    Path installedJar = Path.of(args[1]).toRealPath();
+    requireInstalledCodeSource(HopMetadataReferenceExtractor.class, installedJar);
+    requireInstalledCodeSource(HopProjectDefinitionIndex.class, installedJar);
     Path fixtures = Path.of(args[0]).toAbsolutePath().normalize();
     Files.createDirectory(fixtures);
     HopEnvironment.init();
@@ -70,6 +74,16 @@ public final class HopNativeReferenceAcceptance {
         "{\"gate\":\"native_reference_equivalence\",\"cases\":"
             + (cases + 2)
             + ",\"required_plugins\":7,\"passed\":true}");
+  }
+
+  private static void requireInstalledCodeSource(Class<?> type, Path installedJar)
+      throws Exception {
+    var source = type.getProtectionDomain().getCodeSource();
+    if (source == null
+        || !Path.of(source.getLocation().toURI()).toRealPath().equals(installedJar)) {
+      throw new IllegalStateException(
+          type.getSimpleName() + " was not loaded from installed connector JAR");
+    }
   }
 
   private static PipelineMeta pipeline(MemoryMetadataProvider provider, String name) {

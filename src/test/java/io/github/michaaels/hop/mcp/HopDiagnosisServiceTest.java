@@ -23,11 +23,18 @@ import org.apache.hop.pipeline.engines.local.LocalPipelineRunConfiguration;
 import org.apache.hop.pipeline.transform.TransformMeta;
 import org.apache.hop.pipeline.transforms.dummy.DummyMeta;
 import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 class HopDiagnosisServiceTest {
   @TempDir Path project;
+
+  @BeforeEach
+  void canonicalizeProjectDirectory() throws Exception {
+    // Synthetic execution records must use the same root as ProjectFiles.
+    project = project.toRealPath();
+  }
 
   @BeforeAll
   static void initializeHopPlugins() throws Exception {

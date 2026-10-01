@@ -1,6 +1,8 @@
 # Changelog
 
-## 2.2.4 - 2026-10-01
+## 2.2.5 - 2026-10-01
+
+- Canonicalized temporary test roots so Windows 8.3 aliases match the connector's real paths without weakening filesystem security checks. The v2.2.4 tag failed Windows verification and produced no release assets.
 
 - Accepted repeatable informational conformance events without relaxing required checks, and preserved existing benchmark evidence when an output directory is rejected.
 - Confined project reads and semantic writes against resolved paths and excluded Windows junctions from scans and protected backup directories.

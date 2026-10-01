@@ -12,11 +12,18 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import org.junit.jupiter.api.Assumptions;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 class ProjectFilesBoundsTest {
   @TempDir Path temp;
+
+  @BeforeEach
+  void canonicalizeTemporaryDirectory() throws IOException {
+    // Compare paths against the real root, including Windows 8.3 temp aliases.
+    temp = temp.toRealPath();
+  }
 
   @Test
   void definitionsAndCatalogPagesAreStableAndExposeCompleteness() throws Exception {

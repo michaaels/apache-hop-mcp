@@ -23,6 +23,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -30,6 +31,12 @@ class HopProjectDefinitionIndexTest {
   private static final byte[] PIPELINE = pipeline("A").getBytes(StandardCharsets.UTF_8);
 
   @TempDir Path project;
+
+  @BeforeEach
+  void canonicalizeProjectDirectory() throws IOException {
+    // Cache keys and invalidation paths share ProjectFiles' canonical root.
+    project = project.toRealPath();
+  }
 
   @Test
   void reusesUnchangedDefinitionsAndReindexesOnlyChangedFiles() throws Exception {

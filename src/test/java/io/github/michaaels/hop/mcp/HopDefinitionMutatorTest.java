@@ -33,11 +33,18 @@ import org.apache.hop.workflow.action.ActionMeta;
 import org.apache.hop.workflow.actions.dummy.ActionDummy;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 class HopDefinitionMutatorTest {
   @TempDir Path project;
+
+  @BeforeEach
+  void canonicalizeProjectDirectory() throws IOException {
+    // Windows runners may inject an 8.3 alias; callbacks use ProjectFiles' real root.
+    project = project.toRealPath();
+  }
 
   @BeforeAll
   static void initializeHopPlugins() throws Exception {

@@ -28,7 +28,7 @@ import org.junit.jupiter.api.Test;
 class HopExecutionRepositoryTest {
   @Test
   void readsBoundedNativeHistoryDetailChildrenAndMetrics() throws Exception {
-    Path root = Files.createTempDirectory("hop-mcp-execution-repository");
+    Path root = Files.createTempDirectory("hop-mcp-execution-repository").toRealPath();
     ProjectFiles files = new ProjectFiles(root);
 
     Execution execution =
@@ -105,7 +105,7 @@ class HopExecutionRepositoryTest {
 
   @Test
   void stopsHistoryScanAfterTheRequestedPageAndDefersStateReads() throws Exception {
-    Path root = Files.createTempDirectory("hop-mcp-execution-page");
+    Path root = Files.createTempDirectory("hop-mcp-execution-page").toRealPath();
     Map<String, Execution> executions = new LinkedHashMap<>();
     Map<String, ExecutionState> states = new LinkedHashMap<>();
     for (int i = 0; i < 100; i++) {
@@ -157,7 +157,7 @@ class HopExecutionRepositoryTest {
 
   @Test
   void enforcesNativeExecutionBounds() throws Exception {
-    Path root = Files.createTempDirectory("hop-mcp-execution-bounds");
+    Path root = Files.createTempDirectory("hop-mcp-execution-bounds").toRealPath();
     HopExecutionRepository repository =
         new HopExecutionRepository(
             new ProjectFiles(root),

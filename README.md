@@ -57,13 +57,44 @@ When using a custom `HOP_CONFIG_FOLDER`, initialize it before starting `hop mcp`
 | 2.2.0 | 2.19.0 compile baseline; 2.20.0-SNAPSHOT profile | 21 | 2.0.1 | 2025-11-25 |
 | 2.2.1 | 2.19.0 compile baseline; 2.20.0-SNAPSHOT profile | 21 | 2.0.1 | 2025-11-25 |
 | 2.2.2 | 2.19.0 compile baseline; 2.20.0-SNAPSHOT profile | 21 | 2.0.1 | 2025-11-25 |
+| 2.2.3 | 2.19.0 compile baseline; 2.20.0-SNAPSHOT profile | 21 | 2.0.1 | 2025-11-25 |
+| 2.2.4 (tag only; no release) | 2.19.0 target; Windows verification failed | 21 | 2.0.1 | 2025-11-25 |
 | 2.2.5 | 2.19.0 compile baseline; 2.20.0-SNAPSHOT profile | 21 | 2.0.1 | 2025-11-25 |
+| 2.2.6 | 2.19.0 compile baseline; 2.20.0-SNAPSHOT profile | 21 | 2.0.1 | 2025-11-25 |
 
 The MCP Java SDK 2.0.1 supports protocol revision `2025-11-25`. Revision `2026-07-28` is not supported by this SDK line and is not implemented here. Apache Hop 2.19.0 is the stable compile baseline; the `hop-2.20` profile is a compatibility check against the 2.20.0-SNAPSHOT line, not a stable-support promise. The CI workflow is configured to verify the 2.19.0 archive checksum, install the Marketplace ZIP into a clean distribution, and exercise `hop mcp` over STDIO, as well as build against the 2.20.0-SNAPSHOT line. Installation through the published Hop Marketplace catalog requires post-release verification.
 
+## Recent release history
+
+### 2.2.6 — STDIO shutdown fix
+
+- Keeps stdout reserved for MCP until the process exits. Native pipeline logs emitted after a timeout, cancellation, EOF or startup failure stay on stderr and cannot corrupt the JSON protocol during shutdown.
+- Adds deterministic tests for worker logs emitted after command exit, covering both normal EOF and startup failure.
+- Preserves existing tools, permission flags, execution limits and pipeline behavior. Includes the maintenance changes in 2.2.5.
+
+### 2.2.5 — Verified maintenance release
+
+- Resolves project paths before reads and semantic writes, excludes Windows junctions from scans and protected backups, and prevents aliases from exposing internal or external files.
+- Rejects new connection/schema checks while the JDBC worker remains degraded; returns retryable `DEEP_CHECK_WORKER_UNHEALTHY` until the cancelled callable actually exits.
+- Verifies native acceptance against the installed connector JAR, strengthens conformance checks while accepting repeated informational events, bounds STDIO test cleanup, and preserves Hop Web encoded query parameters.
+- Adds published-ancestor benchmark selection and a manual full-Hop workflow, protects existing benchmark evidence, and canonicalizes Windows test fixtures to resolve the failed 2.2.4 validation.
+
+### 2.2.4 — Tag only; no published release
+
+The [v2.2.4 verification run](https://github.com/michaaels/hop-mcp-connector/actions/runs/36826484672) failed on Windows because several tests compared abbreviated `RUNNER~1` temporary paths with their canonical `runneradmin` paths. The tag contained the confinement, degraded-worker and verification improvements described above, but the release gate blocked publication: **there is no 2.2.4 GitHub Release or downloadable release ZIP**. Its tag is retained for traceability; the corrected changes were published in 2.2.5.
+
+### 2.2.3 — Bounded indexing and native acceptance
+
+- Reduced initial native metadata extraction and repeated filesystem ordering work while preserving typed references, immutable snapshots, single-flight refresh and change detection.
+- Enforced index read budgets for malformed definitions and failed reads, and marked incomplete filesystem scans accurately.
+- Extended Hop Web deadlines to response-body reception and preserved the native `-1` unavailable-error-count sentinel in execution timeout responses.
+- Added native-reference equivalence and operational acceptance on complete Hop installations, mandatory Linux symlink checks, raw conformance-result verification and reusable full-Hop benchmark tooling. Fixed idle SSE headers in the test-only adapter; production transport remains STDIO.
+
+See [CHANGELOG.md](CHANGELOG.md) for the full history, [RELEASE_NOTES.md](RELEASE_NOTES.md) for the current release, and [GitHub Releases](https://github.com/michaaels/hop-mcp-connector/releases) for downloadable packages.
+
 ## Installation
 
-Build the Marketplace ZIP and CycloneDX SBOM with `mvn -B clean verify`. This release checkout builds `target/hop-mcp-connector-2.2.5.zip`. SBOM files are `target/bom.json` and `target/bom.xml`. Install the ZIP into Hop's `plugins/misc/hop-mcp-connector/` directory or use the repository/catalog metadata in `marketplace/`. Restart Hop, then run `hop mcp --help`.
+Build the Marketplace ZIP and CycloneDX SBOM with `mvn -B clean verify`. This release checkout builds `target/hop-mcp-connector-2.2.6.zip`. SBOM files are `target/bom.json` and `target/bom.xml`. Install the ZIP into Hop's `plugins/misc/hop-mcp-connector/` directory or use the repository/catalog metadata in `marketplace/`. Restart Hop, then run `hop mcp --help`.
 
 Hop runtime libraries (`hop-core`, `hop-engine`, and `hop-ui`) are provided by Hop and are not included in the ZIP. The ZIP includes the project license and notice.
 
@@ -186,7 +217,7 @@ The CI workflow also checks the Marketplace ZIP layout, license and notice files
 
 No official MCP Registry `server.json` is included: the registry's current package types do not include Apache Hop Marketplace ZIPs. MCPB is a separate package format and is not used to label this Marketplace artifact.
 
-Inspect the release package with `unzip -l target/hop-mcp-connector-2.2.5.zip`; it must contain `plugins/misc/hop-mcp-connector/`, `LICENSE`, and `NOTICE`, and must not contain Hop runtime jars.
+Inspect the release package with `unzip -l target/hop-mcp-connector-2.2.6.zip`; it must contain `plugins/misc/hop-mcp-connector/`, `LICENSE`, and `NOTICE`, and must not contain Hop runtime jars.
 
 ## Security reporting
 

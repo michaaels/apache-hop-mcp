@@ -1,8 +1,9 @@
 # Changelog
 
-## Unreleased
+## 2.2.6 - 2026-10-01
 
 - Kept command stdout reserved for MCP through process exit, so late native pipeline logs after timeout, EOF or startup failure remain on stderr. Added deterministic late-worker regression tests.
+- Restored the README's 2.2.3 compatibility entry and documented the 2.2.4 tag-only attempt alongside the published maintenance releases.
 
 ## 2.2.5 - 2026-10-01
 
@@ -13,6 +14,11 @@
 - Made the shared deep-check worker reject new tasks while a cancelled JDBC callable is still running, then recover after its real exit.
 - Strengthened installed-JAR native acceptance, conformance report checks, STDIO timeout cleanup, and Hop Web raw-query handling.
 - Replaced the fixed benchmark baseline with a published stable ancestor selector and added a manual Windows full-Hop workflow with role-specific evidence.
+
+## 2.2.4 - 2026-10-01 (tag only; no release)
+
+- The tag contained project-path confinement, degraded-worker rejection, installed-JAR acceptance and verification/benchmark hardening. Windows validation failed because test fixtures compared 8.3 temporary-path aliases with canonical paths.
+- No GitHub Release or downloadable release assets were published. The tag remains as historical evidence; the corrected changes shipped in 2.2.5.
 
 ## 2.2.3 - 2026-09-29
 

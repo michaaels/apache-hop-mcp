@@ -146,25 +146,25 @@ final class HopMcpService implements AutoCloseable {
     return switch (name) {
       case "hop_deep_check", "hop_test_connection", "hop_schema_compare" -> allowDeepCheck;
       case "hop_test_definition",
-              "hop_execute",
-              "hop_start_execution",
-              "hop_execution_status",
-              "hop_execution_history",
-              "hop_execution_detail",
-              "hop_execution_children",
-              "hop_execution_metrics",
-              "hop_diagnose_execution",
-              "hop_data_profile",
-              "hop_stop_execution",
-              "hop_logs" ->
+          "hop_execute",
+          "hop_start_execution",
+          "hop_execution_status",
+          "hop_execution_history",
+          "hop_execution_detail",
+          "hop_execution_children",
+          "hop_execution_metrics",
+          "hop_diagnose_execution",
+          "hop_data_profile",
+          "hop_stop_execution",
+          "hop_logs" ->
           allowExecution;
       case "hop_component_types",
-              "hop_component_schema",
-              "hop_prepare_correction_plan",
-              "hop_apply_correction_plan",
-              "hop_correction_plan_status",
-              "hop_mutate_definition",
-              "hop_rollback_mutation" ->
+          "hop_component_schema",
+          "hop_prepare_correction_plan",
+          "hop_apply_correction_plan",
+          "hop_correction_plan_status",
+          "hop_mutate_definition",
+          "hop_rollback_mutation" ->
           allowMutation;
       case "hop_web_request" -> allowWebApi;
       default -> true;

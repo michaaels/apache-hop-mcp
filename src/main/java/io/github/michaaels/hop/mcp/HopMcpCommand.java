@@ -86,10 +86,11 @@ public class HopMcpCommand implements Runnable, IHopCommand, IHasHopMetadataProv
   @Override
   public void run() {
     PrintStream protocolOut = System.out;
-    PrintStream previousOut = System.out;
-    PrintStream previousHopOut = HopLogStore.OriginalSystemOut;
     ClassLoader previousContextClassLoader = Thread.currentThread().getContextClassLoader();
 
+    // This CLI owns stdout for the lifetime of the process. Native pipeline workers
+    // can emit final logs after STDIO EOF, cancellation, or a startup/shutdown failure.
+    // Only the transport retains the protocol stream; never restore it for logging.
     HopLogStore.OriginalSystemOut = HopLogStore.OriginalSystemErr;
     System.setOut(System.err);
     Thread.currentThread().setContextClassLoader(getClass().getClassLoader());
@@ -130,8 +131,6 @@ public class HopMcpCommand implements Runnable, IHopCommand, IHasHopMetadataProv
       throw new RuntimeException(e);
     } finally {
       Thread.currentThread().setContextClassLoader(previousContextClassLoader);
-      System.setOut(previousOut);
-      HopLogStore.OriginalSystemOut = previousHopOut;
     }
   }
 

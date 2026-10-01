@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Kept command stdout reserved for MCP through process exit, so late native pipeline logs after timeout, EOF or startup failure remain on stderr. Added deterministic late-worker regression tests.
+
 ## 2.2.5 - 2026-10-01
 
 - Canonicalized temporary test roots so Windows 8.3 aliases match the connector's real paths without weakening filesystem security checks. The v2.2.4 tag failed Windows verification and produced no release assets.
